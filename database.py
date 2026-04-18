@@ -46,6 +46,7 @@ def _validate_db_path(raw: str) -> str:
     allowed = (
         _os.path.realpath("."),
         "/data",
+        "/tmp",
     )
     for prefix in allowed:
         if resolved.startswith(prefix):
@@ -58,7 +59,7 @@ def _validate_db_path(raw: str) -> str:
     return "feedback_logs.db"
 
 
-_DB_PATH = _validate_db_path(os.getenv("DB_PATH", "feedback_logs.db"))
+_DB_PATH = _validate_db_path(os.getenv("DB_PATH", "/tmp/feedback_logs.db"))
 _DB_URL  = f"sqlite:///{_DB_PATH}"
 
 _engine = create_engine(
