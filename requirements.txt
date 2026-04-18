@@ -2,7 +2,7 @@
 
 # ── Web framework ─────────────────────────────────────────────────────────────
 fastapi>=0.111.0,<1.0.0
-uvicorn[standard]>=0.29.0,<1.0.0
+uvicorn>=0.29.0,<1.0.0
 # python-multipart removed: no file upload / Form() endpoints exist
 
 # ── JSON serialisation ────────────────────────────────────────────────────────
