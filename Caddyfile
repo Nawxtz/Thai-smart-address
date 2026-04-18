@@ -1,0 +1,41 @@
+# ThaiSmartAddress — Caddyfile
+# Caddy handles HTTPS + Let's Encrypt automatically.
+#
+# ── Setup ──────────────────────────────────────────────────────────────────────
+# 1. Install Caddy on your server:
+#      Ubuntu/Debian:
+#        sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
+#        curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+#        curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+#        sudo apt update && sudo apt install caddy
+#
+# 2. Replace "your-domain.com" below with your real domain (must point to this server).
+#
+# 3. Make sure ports 80 and 443 are open in your firewall/security group.
+#
+# 4. Place this file at /etc/caddy/Caddyfile (or run: caddy run --config Caddyfile)
+#
+# Caddy will obtain and renew Let's Encrypt certificates automatically.
+# ──────────────────────────────────────────────────────────────────────────────
+
+your-domain.com {
+    # ── Dashboard (nginx on port 3000) ────────────────────────────────────────
+    reverse_proxy localhost:3000
+
+    # ── Logging ───────────────────────────────────────────────────────────────
+    log {
+        output file /var/log/caddy/access.log
+        format json
+    }
+}
+
+# Webhook receiver gets its own subdomain so LINE/Meta can reach it separately.
+# Register this URL in LINE Developers Console and Meta Webhooks.
+webhook.your-domain.com {
+    reverse_proxy localhost:8001
+
+    log {
+        output file /var/log/caddy/webhook.log
+        format json
+    }
+}

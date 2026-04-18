@@ -1,0 +1,114 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  ThaiSmartAddress v7.0 — docker-compose.yml                                 ║
+# ║                                                                              ║
+# ║  Services:                                                                   ║
+# ║    api        FastAPI backend  → http://localhost:8000                       ║
+# ║    dashboard  Nginx frontend   → http://localhost:3000                       ║
+# ║                                                                              ║
+# ║  Quick start:                                                                ║
+# ║    mkdir -p ./data                                                           ║
+# ║    cp /path/to/thai_address_full.csv ./data/                                ║
+# ║    GENERATE a key: python -c "import secrets; print(secrets.token_urlsafe(32))"
+# ║    export API_KEY=<that-key>                                                 ║
+# ║    docker compose up --build                                                 ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+
+networks:
+  thai_net:
+    driver: bridge
+
+services:
+
+  # ── Service 1: FastAPI Backend ──────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: thai-smart-address-api
+    image: thai-smart-address-api:7.0
+
+    environment:
+      GEO_CSV_PATH: /data/thai_address_full.csv
+      DB_PATH:      /data/feedback_logs.db
+      LOG_LEVEL:    info
+      CORS_ORIGINS: "http://localhost:3000,http://localhost:5173"
+
+      # Required: inject via environment variable or secrets manager.
+      # Generate: python -c "import secrets; print(secrets.token_urlsafe(32))"
+      # The app will REFUSE to start if this is set to the placeholder value.
+      # ── API Key ────────────────────────────────────────────────────────────────
+      # Leave commented out during local development (no auth required).
+      # Before going to production:
+      #   1. Generate: python -c "import secrets; print(secrets.token_urlsafe(32))"
+      #   2. Uncomment and paste your key below.
+      #   3. Enter the same key in the dashboard API Key field.
+      # API_KEY: "paste-your-generated-key-here"
+
+      # Rate limiting (optional — defaults: 60 requests per 60 seconds per IP)
+      # RATE_LIMIT_MAX:  "60"
+      # RATE_LIMIT_SECS: "60"
+
+    volumes:
+      - type: bind
+        source: ./data
+        target: /data
+
+    ports:
+      - "8000:8000"
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
+
+    restart: unless-stopped
+    networks:
+      - thai_net
+
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: "1.0"
+
+
+  # ── Service 2: Nginx Dashboard ──────────────────────────────────────────────
+  dashboard:
+    image: nginx:1.25-alpine
+    container_name: thai-smart-address-dashboard
+
+    volumes:
+      - type: bind
+        source: ./index.html
+        target: /usr/share/nginx/html/index.html
+        read_only: true
+      - type: bind
+        source: ./static
+        target: /usr/share/nginx/html/static
+        read_only: true
+      - type: bind
+        source: ./nginx.conf
+        target: /etc/nginx/conf.d/default.conf
+        read_only: true
+
+    ports:
+      - "3000:80"
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+
+    restart: unless-stopped
+
+    depends_on:
+      api:
+        condition: service_healthy
+
+    networks:
+      - thai_net
+
+    mem_limit: 64m
+    cpus: "0.25"

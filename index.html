@@ -1,0 +1,965 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ThaiSmartAddress — Admin Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+
+<style>
+/* ══════════════════════════════════════════════════════════════
+   DESIGN DIRECTION: Industrial Control Room
+   — Monochromatic dark base, amber/green/red signal colors
+   — IBM Plex Mono for data, Sarabun for Thai text
+   — Inspired by logistics command centers
+   ══════════════════════════════════════════════════════════════ */
+
+:root {
+  --bg-base:        #0c0e0f;
+  --bg-panel:       #141618;
+  --bg-card:        #1a1d20;
+  --bg-input:       #1f2326;
+  --bg-hover:       #252a2e;
+
+  --border-dim:     #2a2f33;
+  --border-mid:     #3a4045;
+  --border-bright:  #505a62;
+
+  --text-primary:   #dce3e8;
+  --text-secondary: #7f8e99;
+  --text-dim:       #4a5560;
+  --text-mono:      #a8bac8;
+
+  --amber:          #f5a623;
+  --amber-dim:      #3d2a0a;
+  --amber-glow:     rgba(245,166,35,0.12);
+
+  --green:          #2dcc70;
+  --green-dim:      #0b2d1a;
+  --green-glow:     rgba(45,204,112,0.10);
+  --green-border:   rgba(45,204,112,0.40);
+
+  --red:            #e8394a;
+  --red-dim:        #2d0b10;
+  --red-glow:       rgba(232,57,74,0.10);
+  --red-border:     rgba(232,57,74,0.45);
+
+  --blue:           #5b9cf6;
+
+  --font-thai:      'Sarabun', sans-serif;
+  --font-mono:      'IBM Plex Mono', monospace;
+  --radius:         4px;
+  --radius-lg:      8px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-thai);
+  font-size: 14px;
+  line-height: 1.6;
+  min-height: 100vh;
+  /* subtle scan-line texture */
+  background-image:
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(255,255,255,0.012) 2px,
+      rgba(255,255,255,0.012) 4px
+    );
+}
+
+/* ── HEADER ──────────────────────────────────────────────── */
+header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border-dim);
+  padding: 0 28px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  backdrop-filter: blur(8px);
+}
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.header-logo {
+  width: 28px; height: 28px;
+  border: 1px solid var(--amber);
+  border-radius: 3px;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--amber);
+  letter-spacing: 0.08em;
+  flex-shrink: 0;
+}
+.header-title {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: 0.05em;
+}
+.header-sub {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-top: 1px;
+}
+.header-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.status-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  transition: background 0.3s, box-shadow 0.3s;
+}
+.status-dot.online {
+  background: var(--green);
+  box-shadow: 0 0 8px var(--green);
+  animation: pulse-dot 2.4s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+  0%,100% { opacity: 1; }
+  50%      { opacity: 0.5; }
+}
+#api-url-display {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* ── LAYOUT ──────────────────────────────────────────────── */
+.app-layout {
+  display: grid;
+  grid-template-columns: 420px 1fr;
+  gap: 0;
+  min-height: calc(100vh - 56px);
+}
+
+/* ── LEFT PANEL (input) ──────────────────────────────────── */
+.panel-left {
+  border-right: 1px solid var(--border-dim);
+  padding: 28px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  background: var(--bg-panel);
+}
+
+.section-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.section-label::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border-dim);
+}
+
+.api-config {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.api-config input {
+  flex: 1;
+  background: var(--bg-input);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius);
+  color: var(--text-mono);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 8px 12px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.api-config input:focus {
+  border-color: var(--amber);
+}
+.btn-test {
+  padding: 8px 14px;
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--border-mid);
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+.btn-test:hover {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+textarea#chat-input {
+  width: 100%;
+  height: 220px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-lg);
+  color: var(--text-primary);
+  font-family: var(--font-thai);
+  font-size: 14px;
+  padding: 14px 16px;
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  line-height: 1.7;
+}
+textarea#chat-input::placeholder { color: var(--text-dim); }
+textarea#chat-input:focus {
+  border-color: var(--amber);
+  box-shadow: 0 0 0 3px var(--amber-glow);
+}
+
+.sample-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.btn-sample {
+  padding: 5px 11px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-family: var(--font-thai);
+  cursor: pointer;
+  border: 1px solid var(--border-mid);
+  background: transparent;
+  color: var(--text-secondary);
+  transition: all 0.2s;
+}
+.btn-sample:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-bright);
+  color: var(--text-primary);
+}
+
+.btn-parse {
+  width: 100%;
+  padding: 14px;
+  border-radius: var(--radius-lg);
+  font-family: var(--font-thai);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--amber);
+  background: var(--amber-dim);
+  color: var(--amber);
+  letter-spacing: 0.03em;
+  transition: all 0.25s;
+  position: relative;
+  overflow: hidden;
+}
+.btn-parse::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--amber-glow);
+  transform: translateX(-100%);
+  transition: transform 0.4s ease;
+}
+.btn-parse:hover:not(:disabled) {
+  background: rgba(245,166,35,0.22);
+  box-shadow: 0 0 20px var(--amber-glow);
+}
+.btn-parse:hover::before { transform: translateX(0); }
+.btn-parse:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.spinner {
+  display: inline-block;
+  width: 14px; height: 14px;
+  border: 2px solid var(--amber-dim);
+  border-top-color: var(--amber);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  vertical-align: middle;
+  margin-right: 8px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── RIGHT PANEL (results) ───────────────────────────────── */
+.panel-right {
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  overflow-y: auto;
+}
+
+/* ── EMPTY STATE ─────────────────────────────────────────── */
+.empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: var(--text-dim);
+  text-align: center;
+  padding: 60px 20px;
+}
+.empty-icon {
+  width: 64px; height: 64px;
+  border: 1px dashed var(--border-dim);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 24px;
+  opacity: 0.5;
+}
+.empty-state p {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+}
+
+/* ── RESULT CARD ─────────────────────────────────────────── */
+.result-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  animation: card-in 0.35s ease;
+}
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.result-card.status-success {
+  border-color: var(--green-border);
+  box-shadow: 0 0 0 1px rgba(45,204,112,0.08), 0 4px 24px rgba(45,204,112,0.06);
+}
+.result-card.status-flagged {
+  border-color: var(--red-border);
+  box-shadow: 0 0 0 1px rgba(232,57,74,0.08), 0 4px 24px rgba(232,57,74,0.06);
+}
+.result-card.status-error {
+  border-color: var(--red-border);
+  box-shadow: 0 0 0 1px rgba(232,57,74,0.1), 0 4px 24px rgba(232,57,74,0.08);
+}
+
+/* ── CARD HEADER ─────────────────────────────────────────── */
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border-dim);
+}
+.card-header.status-success { background: var(--green-dim); }
+.card-header.status-flagged,
+.card-header.status-error   { background: var(--red-dim);   }
+
+.card-status-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+.badge-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+}
+.status-success .badge-dot { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.status-flagged .badge-dot,
+.status-error   .badge-dot { background: var(--red);   box-shadow: 0 0 8px var(--red);   }
+.status-success .badge-text { color: var(--green); }
+.status-flagged .badge-text,
+.status-error   .badge-text { color: var(--red);   }
+
+.card-meta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.confidence-bar-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.confidence-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.1em;
+}
+.confidence-bar {
+  width: 80px;
+  height: 4px;
+  background: var(--border-dim);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.confidence-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.6s ease;
+}
+.status-success .confidence-fill { background: var(--green); }
+.status-flagged .confidence-fill,
+.status-error   .confidence-fill { background: var(--red);   }
+
+.confidence-pct {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  min-width: 32px;
+  text-align: right;
+}
+.status-success .confidence-pct { color: var(--green); }
+.status-flagged .confidence-pct,
+.status-error   .confidence-pct { color: var(--red);   }
+
+.latency-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+/* ── WARNINGS BLOCK ──────────────────────────────────────── */
+.warnings-block {
+  margin: 14px 20px 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(232,57,74,0.25);
+  border-radius: var(--radius);
+  background: rgba(232,57,74,0.07);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.warning-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  color: #f09;
+  color: #f47;
+  line-height: 1.5;
+}
+.warning-icon {
+  flex-shrink: 0;
+  width: 16px; height: 16px;
+  background: rgba(232,57,74,0.3);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 9px;
+  margin-top: 1px;
+}
+
+/* ── TAGS BLOCK ──────────────────────────────────────────── */
+.tags-block {
+  padding: 10px 20px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tag-chip {
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  border: 1px solid;
+}
+.tag-chip.Urgent       { color: #f5a623; border-color: rgba(245,166,35,0.5); background: rgba(245,166,35,0.1); }
+.tag-chip.Fragile      { color: #5b9cf6; border-color: rgba(91,156,246,0.5); background: rgba(91,156,246,0.1); }
+.tag-chip.Drop_at_guard{ color: #a68cf5; border-color: rgba(166,140,245,0.5);background: rgba(166,140,245,0.1);}
+.tag-chip.Do_not_fold  { color: #2dcc70; border-color: rgba(45,204,112,0.5); background: rgba(45,204,112,0.1); }
+.tag-chip.Keep_dry     { color: #5bc8f5; border-color: rgba(91,200,245,0.5); background: rgba(91,200,245,0.1); }
+
+/* ── FIELD GRID ──────────────────────────────────────────── */
+.fields-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: var(--border-dim);
+  margin-top: 14px;
+  border-top: 1px solid var(--border-dim);
+  border-bottom: 1px solid var(--border-dim);
+}
+.field-cell {
+  background: var(--bg-card);
+  padding: 12px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.field-cell.full-width {
+  grid-column: 1 / -1;
+}
+.field-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.field-input {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border-dim);
+  color: var(--text-primary);
+  font-family: var(--font-thai);
+  font-size: 14px;
+  padding: 3px 0;
+  outline: none;
+  transition: border-color 0.2s;
+  width: 100%;
+}
+.field-input::placeholder { color: var(--text-dim); font-style: italic; }
+.field-input:focus { border-color: var(--amber); }
+.field-input.mono {
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+/* ── CARD FOOTER ─────────────────────────────────────────── */
+.card-footer {
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.request-id {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.05em;
+  word-break: break-all;
+}
+
+.btn-feedback {
+  padding: 10px 20px;
+  border-radius: var(--radius);
+  font-family: var(--font-thai);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--green-border);
+  background: var(--green-dim);
+  color: var(--green);
+  transition: all 0.2s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.btn-feedback:hover:not(:disabled) {
+  background: rgba(45,204,112,0.2);
+  box-shadow: 0 0 12px rgba(45,204,112,0.15);
+}
+.btn-feedback:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.feedback-toast {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--green);
+  padding: 8px 14px;
+  border: 1px solid var(--green-border);
+  border-radius: var(--radius);
+  background: var(--green-dim);
+  animation: toast-in 0.25s ease;
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* ── HISTORY STRIP ───────────────────────────────────────── */
+.history-strip {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.history-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: transform 0.15s;
+}
+.history-dot:hover { transform: scale(1.4); }
+.history-dot.s { background: var(--green); }
+.history-dot.f { background: var(--red); }
+.history-dot.e { background: var(--text-dim); }
+
+/* ── RESPONSIVE ──────────────────────────────────────────── */
+@media (max-width: 860px) {
+  .app-layout { grid-template-columns: 1fr; }
+  .panel-left { border-right: none; border-bottom: 1px solid var(--border-dim); }
+  .fields-grid { grid-template-columns: 1fr; }
+  .field-cell.full-width { grid-column: 1; }
+}
+
+/* ── SCROLLBAR ───────────────────────────────────────────── */
+::-webkit-scrollbar       { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-base); }
+::-webkit-scrollbar-thumb { background: var(--border-mid); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-bright); }
+</style>
+</head>
+
+<body>
+
+<!-- ══════════════════════════════════════════════════════════
+     HEADER
+══════════════════════════════════════════════════════════ -->
+<header>
+  <div class="header-brand">
+    <div class="header-logo">TSA</div>
+    <div>
+      <div class="header-title">ThaiSmartAddress</div>
+      <div class="header-sub">Admin Dashboard · v7.0</div>
+    </div>
+  </div>
+  <div class="header-status">
+    <div class="status-dot" id="api-dot"></div>
+    <span id="api-status-text">ยังไม่ได้เชื่อมต่อ</span>
+    <span id="api-url-display"></span>
+  </div>
+</header>
+
+<!-- ══════════════════════════════════════════════════════════
+     MAIN LAYOUT
+══════════════════════════════════════════════════════════ -->
+<div class="app-layout">
+
+  <!-- LEFT PANEL -->
+  <aside class="panel-left">
+
+    <div>
+      <div class="section-label">API Endpoint</div>
+      <div class="api-config">
+        <input type="text" id="api-base" value="" placeholder="Leave blank (same origin) or http://other-host" />
+        <button class="btn-test" onclick="testConnection()">Test</button>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label">API Key</div>
+      <div class="api-config">
+        <!-- FIX [#4]: API key input — required when API_KEY is set on the server.
+             Value is saved to localStorage for convenience (not a security control). -->
+        <input type="password" id="api-key-input"
+               placeholder="X-API-Key (required in production)"
+               style="flex:1;background:var(--bg-input);border:1px solid var(--border-dim);border-radius:var(--radius);color:var(--text-mono);font-family:var(--font-mono);font-size:12px;padding:8px 12px;outline:none;" />
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label">ข้อความแชทลูกค้า</div>
+      <textarea id="chat-input" placeholder="วางข้อความแชทลูกค้าที่นี่...&#10;&#10;เช่น: รบกวนส่งที่ คุณแม็ค 99/9 ตำบลแสนสุข เมืองชลบุรี ชลบุรี 20130 0812345678"></textarea>
+    </div>
+
+    <div>
+      <div class="section-label">ตัวอย่างทดสอบ</div>
+      <div class="sample-buttons">
+        <button class="btn-sample" onclick="loadSample(0)">✅ ที่อยู่สมบูรณ์</button>
+        <button class="btn-sample" onclick="loadSample(1)">🔤 กทม + เส้นขีด</button>
+        <button class="btn-sample" onclick="loadSample(2)">💬 แชท + ขยะ</button>
+        <button class="btn-sample" onclick="loadSample(3)">⚠️ ข้อมูลน้อย</button>
+        <button class="btn-sample" onclick="loadSample(4)">📦 ของแตก+ด่วน</button>
+      </div>
+    </div>
+
+    <button class="btn-parse" id="btn-parse" onclick="parseAddress()">
+      ▶ ประมวลผลที่อยู่
+    </button>
+
+    <div>
+      <div class="section-label">ประวัติ Session</div>
+      <div class="history-strip" id="history-strip">
+        <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim)">ยังไม่มีประวัติ</span>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- RIGHT PANEL -->
+  <main class="panel-right" id="results-panel">
+    <div class="empty-state" id="empty-state">
+      <div class="empty-icon">📦</div>
+      <p>วางข้อความแชทลูกค้าทางซ้าย<br/>แล้วกด "ประมวลผลที่อยู่"</p>
+    </div>
+  </main>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     JAVASCRIPT
+══════════════════════════════════════════════════════════ -->
+<script>
+  const samples = [
+      "รบกวนส่งที่ คุณแม็ค 99/9 ตำบลแสนสุข เมืองชลบุรี ชลบุรี 20130 0812345678",
+      "ส่งคุณสมศรี 45/7 ถ.บางนา กทม. 10260 0823456789",
+      "คุณแม็กส่งที่ คอนโดลุมพินี ห้อง 45 ชั้น 8 ถ.สุขุมวิท เขตคลองเตย กทม 10110 โอนเงินแล้วนะคะ 091-111-2222",
+      "คุณแอนนี่ โทร 0812345678",
+      "ด่วนมากๆ คุณกาญจนา 5/5 ต.ช้างเผือก อ.เมืองเชียงใหม่ จ.เชียงใหม่ 50300 ระวังของแตก"
+  ];
+
+  function loadSample(index) {
+      document.getElementById('chat-input').value = samples[index];
+  }
+
+  function getBaseUrl() {
+      let base = document.getElementById('api-base').value.trim();
+      // ถ้าไม่ได้กรอกอะไรเลย ให้ชี้ไปที่ localhost:8000 (Uvicorn)
+      if (!base) base = ''; // use relative paths — nginx/Caddy proxy handles routing
+      return base.replace(/\/$/, ""); 
+  }
+
+  function getHeaders() {
+      const headers = { 'Content-Type': 'application/json' };
+      const apiKey = document.getElementById('api-key-input').value.trim();
+      if (apiKey) headers['X-API-Key'] = apiKey; 
+      return headers;
+  }
+
+  async function testConnection() {
+      const statusText = document.getElementById('api-status-text');
+      const statusDot = document.getElementById('api-dot');
+      const urlDisplay = document.getElementById('api-url-display');
+      const baseUrl = getBaseUrl();
+
+      urlDisplay.innerText = baseUrl;
+      statusText.innerText = "กำลังเชื่อมต่อ...";
+      statusDot.className = "status-dot";
+      statusDot.style.background = "var(--text-dim)";
+
+      try {
+          const res = await fetch(baseUrl + '/api/health', { headers: getHeaders() });
+          if (res.ok) {
+              statusText.innerText = "ออนไลน์ (Online)";
+              statusDot.className = "status-dot online";
+              statusDot.style.background = ""; 
+          } else {
+              throw new Error("HTTP " + res.status);
+          }
+      } catch (e) {
+          statusText.innerText = "ออฟไลน์ (Offline) - " + e.message;
+          statusDot.className = "status-dot";
+          statusDot.style.background = "var(--red)";
+      }
+  }
+
+  // เทสต์การเชื่อมต่อทันทีที่โหลดหน้าเว็บเสร็จ
+  window.addEventListener('DOMContentLoaded', testConnection);
+
+  async function parseAddress() {
+      const text = document.getElementById('chat-input').value.trim();
+      if (!text) return alert("กรุณาใส่ข้อความแชทลูกค้าก่อนครับ!");
+
+      const btn = document.getElementById('btn-parse');
+      btn.disabled = true;
+      btn.innerHTML = '<div class="spinner"></div> กำลังประมวลผล...';
+
+      try {
+          const res = await fetch(getBaseUrl() + '/api/parse', {
+              method: 'POST',
+              headers: getHeaders(),
+              body: JSON.stringify({ text })
+          });
+
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || data.error || "เกิดข้อผิดพลาดจากเซิร์ฟเวอร์");
+
+          renderResultCard(data);
+          addHistory(data.status);
+      } catch (e) {
+          alert("Error: " + e.message + "\n(อย่าลืมเปิดเซิร์ฟเวอร์ uvicorn หรือเช็ค API Key นะครับ)");
+          addHistory('Error');
+      } finally {
+          btn.disabled = false;
+          btn.innerHTML = '▶ ประมวลผลที่อยู่';
+      }
+  }
+
+  function renderResultCard(data) {
+      document.getElementById('empty-state').style.display = 'none';
+      const panel = document.getElementById('results-panel');
+
+      // แยกสีตามสถานะ (เขียว, เหลือง, แดง)
+      let statusClass = "status-success";
+      let statusTextTh = "สำเร็จ";
+      if (data.status === "Flagged for Review") { statusClass = "status-flagged"; statusTextTh = "ต้องตรวจสอบ"; }
+      else if (data.status === "Error" || data.status === "Not an Address") { statusClass = "status-error"; statusTextTh = "ล้มเหลว"; }
+      else if (data.status === "Success with Warnings") { statusClass = "status-flagged"; statusTextTh = "มีข้อควรระวัง"; }
+
+      // จัดการ Tags
+      let tagsHtml = "";
+      (data.tags || []).forEach(t => {
+          tagsHtml += `<span class="tag-chip ${t}">${t}</span>`;
+      });
+      const tagsBlock = tagsHtml ? `<div class="tags-block">${tagsHtml}</div>` : "";
+
+      // จัดการ Warnings
+      let warnsHtml = "";
+      (data.warnings || []).forEach(w => {
+          warnsHtml += `<div class="warning-row"><div class="warning-icon">!</div><div>${w}</div></div>`;
+      });
+      const warnsBlock = warnsHtml ? `<div class="warnings-block">${warnsHtml}</div>` : "";
+
+      // สร้างการ์ดผลลัพธ์
+      const card = document.createElement('div');
+      card.className = `result-card ${statusClass}`;
+      card.innerHTML = `
+          <div class="card-header ${statusClass}">
+              <div class="card-status-badge">
+                  <div class="badge-dot"></div>
+                  <span class="badge-text">${statusTextTh}</span>
+              </div>
+              <div class="card-meta">
+                  <div class="confidence-bar-wrap">
+                      <span class="confidence-label">CONFIDENCE</span>
+                      <div class="confidence-bar"><div class="confidence-fill" style="width: ${data.confidence * 100}%"></div></div>
+                      <span class="confidence-pct">${(data.confidence * 100).toFixed(0)}%</span>
+                  </div>
+                  <span class="latency-badge">${data.processing_ms || 0}ms</span>
+              </div>
+          </div>
+          ${warnsBlock}
+          ${tagsBlock}
+          <div class="fields-grid">
+              <div class="field-cell">
+                  <span class="field-label">ผู้รับ (RECEIVER)</span>
+                  <input class="field-input" name="receiver" value="${data.receiver || ''}" placeholder="-" />
+              </div>
+              <div class="field-cell">
+                  <span class="field-label">เบอร์โทร (PHONE)</span>
+                  <input class="field-input mono" name="phone" value="${data.phone || ''}" placeholder="-" style="color:var(--blue)" />
+              </div>
+              <div class="field-cell full-width">
+                  <span class="field-label">รายละเอียด (ADDRESS)</span>
+                  <input class="field-input" name="address_detail" value="${data.address_detail || ''}" placeholder="-" />
+              </div>
+              <div class="field-cell">
+                  <span class="field-label">ตำบล / แขวง (SUB_DISTRICT)</span>
+                  <input class="field-input" name="sub_district" value="${data.sub_district || ''}" placeholder="-" />
+              </div>
+              <div class="field-cell">
+                  <span class="field-label">อำเภอ / เขต (DISTRICT)</span>
+                  <input class="field-input" name="district" value="${data.district || ''}" placeholder="-" />
+              </div>
+              <div class="field-cell">
+                  <span class="field-label">จังหวัด (PROVINCE)</span>
+                  <input class="field-input" name="province" value="${data.province || ''}" placeholder="-" />
+              </div>
+              <div class="field-cell">
+                  <span class="field-label">รหัสไปรษณีย์ (ZIPCODE)</span>
+                  <input class="field-input mono" name="zipcode" value="${data.zipcode || ''}" placeholder="-" style="font-size:16px; font-weight:600;" />
+              </div>
+          </div>
+          <div class="card-footer">
+              <span class="request-id">REQ: ${data.request_id || 'LOCAL-DEV'}</span>
+              <button class="btn-feedback">✓ ยืนยันข้อมูล</button>
+          </div>
+      `;
+      
+      // แทรกการ์ดใหม่ไว้บนสุด
+      panel.insertBefore(card, panel.firstChild);
+      // เลื่อนกล่อง Empty ไปอยู่ล่างสุด
+      panel.appendChild(document.getElementById('empty-state'));
+
+      // เชื่อมปุ่มยืนยันกับ /api/feedback
+      const feedbackBtn = card.querySelector('.btn-feedback');
+      const originalText = document.getElementById('chat-input').value.trim();
+
+      feedbackBtn.addEventListener('click', async () => {
+          feedbackBtn.disabled = true;
+          feedbackBtn.textContent = 'กำลังบันทึก...';
+
+          // รวบรวมค่าที่แก้ไขจากช่องอินพุต
+          const corrected = {};
+          card.querySelectorAll('.field-input[name]').forEach(input => {
+              corrected[input.name] = input.value.trim() || null;
+          });
+
+          try {
+              const res = await fetch(getBaseUrl() + '/api/feedback', {
+                  method: 'POST',
+                  headers: getHeaders(),
+                  body: JSON.stringify({
+                      original_text:    originalText,
+                      parsed_output:    data,
+                      corrected_output: corrected,
+                      corrected_by:     'admin',
+                      request_id:       data.request_id || null,
+                  })
+              });
+              if (!res.ok) {
+                  const err = await res.json().catch(() => ({}));
+                  throw new Error(err.detail || err.error || `เซิร์ฟเวอร์ตอบกลับ ${res.status}`);
+              }
+              feedbackBtn.textContent = '✅ บันทึกแล้ว';
+              feedbackBtn.style.borderColor = 'var(--green)';
+              feedbackBtn.style.color = 'var(--green)';
+          } catch (e) {
+              feedbackBtn.disabled = false;
+              feedbackBtn.textContent = '✓ ยืนยันข้อมูล';
+              alert('บันทึกไม่สำเร็จ: ' + e.message);
+          }
+      });
+  }
+
+  function addHistory(status) {
+      const strip = document.getElementById('history-strip');
+      if (strip.innerText.includes("ยังไม่มีประวัติ")) strip.innerHTML = '';
+      
+      const dot = document.createElement('div');
+      if (status.includes("Success")) dot.className = "history-dot s";
+      else if (status.includes("Flagged") || status.includes("Warnings")) dot.className = "history-dot f";
+      else dot.className = "history-dot e";
+      
+      dot.title = status;
+      strip.appendChild(dot);
+  }
+</script>
+
+</body>
+</html>

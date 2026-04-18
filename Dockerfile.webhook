@@ -1,0 +1,27 @@
+# ThaiSmartAddress — Dockerfile.webhook
+# Lean image for the webhook receiver service (LINE / Meta adapter).
+# Runs on port 8001, separate from the main API container.
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Only needs fastapi, uvicorn, and httpx — no NLP deps
+RUN pip install --no-cache-dir \
+    fastapi>=0.111.0 \
+    uvicorn[standard]>=0.29.0 \
+    httpx>=0.27.0
+
+COPY webhook_receiver.py .
+
+RUN useradd --system --uid 1001 --no-create-home webhook \
+    && chown -R webhook:webhook /app
+USER webhook
+
+EXPOSE 8001
+
+CMD ["uvicorn", "webhook_receiver:app", "--host", "0.0.0.0", "--port", "8001", "--log-level", "info"]

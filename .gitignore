@@ -1,0 +1,26 @@
+# --- Python & Environment ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# --- Database / Persistent Data ---
+# Exclude database files, especially if they contain live data or session locks
+*.db
+*.db-shm
+*.db-wal
+
+# --- Docker ---
+# Exclude build artifacts or local secrets if they end up in root
+.dockerignore
+
+# --- System & IDE ---
+.DS_Store
+.vscode/
+.idea/
+
+# --- Environment Secrets (CRITICAL) ---
+# Never push your local environment variables!
+.env

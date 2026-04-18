@@ -1,0 +1,30 @@
+# ThaiSmartAddress v7.0 — production dependencies only
+
+# ── Web framework ─────────────────────────────────────────────────────────────
+fastapi>=0.111.0,<1.0.0
+uvicorn[standard]>=0.29.0,<1.0.0
+# python-multipart removed: no file upload / Form() endpoints exist
+
+# ── JSON serialisation ────────────────────────────────────────────────────────
+orjson>=3.9.0,<4.0.0
+
+# ── Data persistence ──────────────────────────────────────────────────────────
+sqlalchemy>=2.0.0,<3.0.0
+
+# ── Thai NLP ──────────────────────────────────────────────────────────────────
+pythainlp>=5.0.0
+python-crfsuite>=0.9.9   # required by pythainlp NER — without this NER is silently disabled
+
+# ── Fuzzy matching ────────────────────────────────────────────────────────────
+rapidfuzz>=3.0.0,<4.0.0
+# pandas removed: geo CSV loaded via stdlib csv.DictReader — pandas was unused
+
+# ── Schema validation ─────────────────────────────────────────────────────────
+pydantic>=2.0.0,<3.0.0
+
+# ── Structured JSON logging ───────────────────────────────────────────────────
+# Graceful fallback to plain-text if not installed.
+python-json-logger>=2.0.0,<4.0.0
+
+# ── Observability ─────────────────────────────────────────────────────────────
+prometheus-fastapi-instrumentator>=6.1.0,<7.0.0
