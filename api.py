@@ -58,7 +58,7 @@ from typing import Any, ClassVar, Dict, List, Optional
 import orjson
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, FileResponse
 from pydantic import BaseModel, Field, field_validator
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -537,6 +537,11 @@ async def _run_in_executor(request: Request, fn, *args):
 # ══════════════════════════════════════════════════════════════════════════════
 # ENDPOINTS
 # ══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/", tags=["Web UI"], summary="Serve Admin Dashboard")
+async def serve_admin_dashboard():
+    """Serves the index.html file for the Admin Dashboard."""
+    return FileResponse("index.html")
 
 @app.post(
     "/api/parse",
