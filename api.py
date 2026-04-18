@@ -313,6 +313,11 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
+@app.get("/")
+async def serve_admin_dashboard():
+    from fastapi.responses import FileResponse
+    return FileResponse("index.html")
+
 # FIX [#23]: Prometheus metrics at /metrics — enables latency/error/throughput
 # alerting without any additional instrumentation code in endpoint handlers.
 # Graceful fallback when the package is absent (e.g. slim dev containers).
@@ -538,10 +543,6 @@ async def _run_in_executor(request: Request, fn, *args):
 # ENDPOINTS
 # ══════════════════════════════════════════════════════════════════════════════
 
-@app.get("/", tags=["Web UI"], summary="Serve Admin Dashboard")
-async def serve_admin_dashboard():
-    """Serves the index.html file for the Admin Dashboard."""
-    return FileResponse("index.html")
 
 @app.post(
     "/api/parse",
@@ -622,13 +623,6 @@ async def submit_feedback(body: FeedbackRequest, request: Request) -> FeedbackRe
     )
 
 
-@app.get(
-    "/api/corrections",
-    response_model=CorrectionListResponse,
-    tags=["Feedback"],
-    dependencies=[Depends(verify_api_key)],
-    summary="List recent corrections (admin)",
-)
 async def list_corrections(request: Request, limit: int = 50) -> CorrectionListResponse:
     db_adapter: SQLiteFeedbackStore = request.app.state.db_adapter
     # FIX [FIX-A3]: clamp both sides — min(-1, 500) = -1 would pass -1 to SQLAlchemy
