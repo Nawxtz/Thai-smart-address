@@ -72,9 +72,11 @@ _engine = create_engine(
 
 @sa_event.listens_for(_engine, "connect")
 def _enable_wal(dbapi_conn, _record):
-    """Switch SQLite to WAL mode — allows concurrent reads during writes."""
+    """Switch SQLite to WAL mode with busy timeout for high-concurrency safety."""
     cur = dbapi_conn.cursor()
     cur.execute("PRAGMA journal_mode=WAL;")
+    cur.execute("PRAGMA synchronous=NORMAL;")
+    cur.execute("PRAGMA busy_timeout=5000;")
     cur.close()
 
 

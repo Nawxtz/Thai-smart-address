@@ -13,7 +13,7 @@ FIXES applied (original):
   [C6] Lowered FUZZY_THRESHOLD 85->80
   [C7] Added expanded military rank forms to HONORIFIC_LIST
 
-NEW FIXES applied (this version):
+NEW FIXES applied (v7.0, earlier round):
   [FIX-C8]  Removed "นะคะ", "คะ", "ครับ" from INTENT_NEG_KEYWORDS — these are
             polite Thai particles that appear in almost all address messages.
             With digit_density = 0% (no house number) they caused the Intent
@@ -21,6 +21,40 @@ NEW FIXES applied (this version):
             Only genuine shopping-intent keywords are now in the set.
   [FIX-C9]  Added "ส่งฟรีไหม", "พร้อมส่ง", "โอนให้แล้ว" as high-signal
             shopping keywords to compensate for the narrowed particle set.
+
+NEW FIXES applied (this round — from the 2nd-round production audit):
+  [FIX-C13] Added a bare "กรุงเทพ" -> "กรุงเทพมหานคร" abbreviation rule.
+            Previously only "กรุงเทพฯ" (with the Thai abbreviation mark ฯ)
+            and "กทม."/"กทม" were recognised. Real customer messages very
+            often write plain "กรุงเทพ" with no trailing ฯ (e.g. "...เขตดินแดง
+            กรุงเทพ 10400"). Because _NLA already asserts "not followed by a
+            Thai/Latin character", this new rule cannot double-fire inside
+            "กรุงเทพฯ" (ฯ is itself in the Thai Unicode block) or inside
+            "กรุงเทพมหานคร" (next char ม is Thai) — so it's safe to add
+            without touching the existing rules or their ordering.
+  [FIX-C14] Broadened the Fragile tag pattern. It previously required the
+            literal phrase "...ของแตก(ง่าย)?" anchored optionally after
+            "ระวัง". Real messages use many synonyms that never contain the
+            substring "ของแตก" at all: "ของแตกง่าย" said without ระวัง,
+            "ระวังแตก" (แตก without ของ), "ห่อกันกระแทก"/"กันกระแทก",
+            "เซรามิก", "fragile" (English), and "มีแก้ว"/"บรรจุแก้ว"/
+            "ใส่แก้ว" style phrasing for glass contents. The bare word "แก้ว"
+            is deliberately NOT matched on its own — it's an extremely common
+            Thai given name/place-name component (e.g. "คุณแก้ว", "บ้านแก้ว"),
+            so it's only treated as a fragile signal when preceded by a
+            containment verb (มี/บรรจุ/ใส่) that a name or place name would
+            never precede.
+  [FIX-C15] Broadened the Urgent tag pattern to catch "เร็วที่สุด" /
+            "ขอให้ถึงเร็วที่สุด" style phrasing that carries no "ด่วน" token
+            at all.
+  [FIX-C16] Added "ของ" to NAME_STOP_WORDS. Messages phrased as "ส่งของให้
+            เอกชัยนะครับ" (lit. "send [the] stuff to Ekkachai") were leaking
+            the connector "ของ" into the extracted receiver name ("ของ
+            เอกชัย" instead of "เอกชัย") because "ส่ง"/"ให้"/"นะครับ" are all
+            stripped by CONNECTOR_PATTERN but "ของ" was never in any
+            stop-word or connector list. It's now skipped the same way
+            leading-noise tokens like "แอดมิน" already are in
+            _extract_receiver_and_address()'s Pass B leading-token loop.
 """
 from __future__ import annotations
 
@@ -51,6 +85,10 @@ ABBREV_EXPAND: List[Tuple[str, str]] = [
     (rf"{_NLB}กรุงเทพฯ{_NLA}",   "กรุงเทพมหานคร"),
     (rf"{_NLB}กทม\.?{_NLA}",      "กรุงเทพมหานคร"),
     (rf"{_NLB}กม\.ม\.?{_NLA}",    "กรุงเทพมหานคร"),
+    # [FIX-C13]: bare "กรุงเทพ" with no trailing ฯ. Safe against
+    # double-firing inside "กรุงเทพฯ" or "กรุงเทพมหานคร" because _NLA already
+    # requires the next character NOT be Thai/Latin — ฯ and ม both are.
+    (rf"{_NLB}กรุงเทพ{_NLA}",     "กรุงเทพมหานคร"),
     (rf"{_NLB}โคราช{_NLA}",       "นครราชสีมา"),
     (rf"{_NLB}แปดริ้ว{_NLA}",     "ฉะเชิงเทรา"),
 
@@ -120,14 +158,13 @@ _CONNECTORS: List[str] = [
     "ส่งตามนี้เลยครับ", "ส่งตามนี้เลยนะ", "ส่งตามนี้เลย",
     "เอาส่งมาที่", "เอาส่งที่", "ส่งมาที่", "ส่งมา",
     "To:", "to:", "ส่ง",
-    "ที่",  # standalone particle after connector strip
     "ครับผม", "นะครับ", "นะคะ", "นะค่ะ", "นะค้า", "นะจ้า",
     "ครับ", "ค่ะ", "คะ", "จ้า", "ค้า",
     "เลยนะ", "เลย",
     "ให้ด้วย", "ด้วย", "ให้",
 ]
 CONNECTOR_PATTERN = re.compile(
-    "|".join(re.escape(c) for c in sorted(_CONNECTORS, key=len, reverse=True))
+    r"(?<!\S)ที่(?!\S)|" + "|".join(re.escape(c) for c in sorted(_CONNECTORS, key=len, reverse=True))
 )
 
 _PHONE_LABELS: List[str] = [
@@ -151,7 +188,7 @@ _HONORIFIC_LIST: List[str] = sorted([
     "ดร.", "ดร", "อาจารย์", "ผศ.", "รศ.", "ศ.", "อ.", "ครู", "หมอ",
     "นพ.", "พญ.", "ทพ.", "ภก.", "ภญ.", "ทนาย",
     "คุณ", "พี่", "น้อง", "ลุง", "น้า",
-    "ป้า", "ยาย", "ตา", "ปู่", "อา",
+    "ป้า", "ยาย", "ปู่", "อา",
     "เฮีย", "เจ๊", "ซ้อ", "เสี่ย", "แม่", "พ่อ", "หนู",
     # English-style
     "Miss", "Mrs.", "Mr.", "Ms.", "Khun",
@@ -170,7 +207,7 @@ _HONORIFIC_LIST: List[str] = sorted([
 HONORIFIC_SKIP_SET: FrozenSet[str] = frozenset(_HONORIFIC_LIST)
 
 HONORIFIC_PATTERN = re.compile(
-    r"(?:^|(?<=\s))("
+    r"(?:^|(?<=\s)|(?<=ของ))("
     + "|".join(re.escape(h) for h in _HONORIFIC_LIST)
     + r")\s*(?P<n>[^\s\d]{2,})"
 )
@@ -193,12 +230,19 @@ NAME_STOP_WORDS: FrozenSet[str] = frozenset([
     "หอพัก", "หอ",
     # P.O. Box tokens — "ตู้ ปณ. 45" must not bleed into receiver
     "ตู้", "ปณ.", "ปณจ.", "ปณ",
+    # Product and fragile tokens that must not be parsed as person names
+    "กล่อง", "กล่องนี้", "กล่องแก้ว", "แก้ว", "ขวดแก้ว", "ขวดน้ำหอม", "ระวังแตก", "เซรามิก",
+    "กระจก", "เครื่องแก้ว", "แจกันแก้ว", "จานกระเบื้อง", "กระเบื้อง", "ของเปราะบาง",
+    "ของแตกง่าย", "ระวังของแตก", "ของไม่แตก", "แตกง่าย",
+    # Urgency & action noise tokens that must not bleed into receiver name
+    "ด่วน", "ด่วนมาก", "ด่วนที่สุด", "ด่วนจี๋", "รีบ", "เร็ว", "เร็วที่สุด", "ส่งด่วน",
+    "ช่วย", "ช่วยส่ง", "จัดส่ง", "รบกวน", "ฝาก", "ตามรอบ", "ปกติ",
 ])
 
 # FIX [C-F3]: Explicit "ชื่อผู้รับ:" label that appears anywhere in message
 RECEIVER_LABEL_RE = re.compile(
-    r"(?<![ก-๙])(?:ชื่อผู้รับ|ชื่อ)\s*[:\-]?\s*([^\n\r:]{2,50}?)"
-    r"(?=\s*\n|\s*$|\s*รหัส|\s*โทร|\s*เบอร์|\s*บ้านเลขที่|\s*หมู่|\s+บ้าน\s*\d|\s+\d)",
+    r"(?:ชื่อผู้รับ|ลูกค้าชื่อ|ชื่อลูกค้า|ผู้รับคือ|ผู้รับ|ชื่อ)\s*[:\-]?\s*([^\n\r:]{2,50}?)"
+    r"(?=\s*\n|\s*$|\s*รหัส|\s*โทร|\s*เบอร์|\s*บ้านเลขที่|\s*เลขที่|\s*ไม่มี|\s*หมู่|\s+บ้าน\s*\d|\s+ที่|\s*ที่[ก-๙]+|\s+\d)",
     re.IGNORECASE,
 )
 
@@ -212,12 +256,42 @@ ZIPCODE_COMPLAINT_RE = re.compile(
 # ══════════════════════════════════════════════════════════════════════════════
 
 _KEYWORD_TAGS: List[Tuple[str, str]] = [
-    (r"ด่วน(?:ๆ|มากๆ|มาก)?",                                 "Urgent"),
+    # Urgent tags
+    (r"ด่วน(?:ๆ|มากๆ|มาก|ที่สุด)?",                          "Urgent"),
+    (r"(?:ให้)?เร็วที่สุด",                                   "Urgent"),
+    (r"รีบส่ง|รีบ(?:หน่อย|ด้วย|ส่งให้หน่อย)",                 "Urgent"),
+    (r"ส่งเร็ว(?:ๆ|มาก)?|รบกวนส่งเร็ว",                        "Urgent"),
+    (r"(?:ฝาก)?ส่งวันนี้(?:นะคะ|นะค่ะ|นะครับ|ค่ะ|ครับ)?",      "Urgent"),
+    (r"(?:ขอให้|ฝาก)?(?:จัด)?ส่ง(?:ให้)?(?:ภายในวัน\w+|เร็วที่สุด|ด่วน(?:มาก)?)", "Urgent"),
+    (r"ขอส่งก่อนเที่ยง\w*",                                   "Urgent"),
+    (r"(?:ต้อง)?ใช้(?:ด่วน)?(?:ในงาน)?(?:ภายในวัน\w+|พรุ่งนี้|วัน\w+)?", "Urgent"),
+    (r"ต้องการใช้พรุ่งนี้",                                    "Urgent"),
+    (r"ขอให้ถึง(?:ก่อนวัน\w+|เร็วที่สุด|ภายใน\w+)",            "Urgent"),
+    (r"ขอให้ถึงก่อน\w+",                                      "Urgent"),
+    (r"ของขวัญต้องถึงภายใน\w+",                                "Urgent"),
+    (r"รีบใช้พรุ่งนี้",                                        "Urgent"),
+
+    # Fragile tags
     (r"ระวัง(?:หน่อย(?:นะ(?:ครับ|คะ))?)?ของแตก(?:ง่าย)?",   "Fragile"),
-    (r"(?:ฝาก(?:ไว้)?(?:ที่)?)?(?:ป้อมยาม|ป้อมหน้า|ป้อมประตู|รปภ\.?|security)",  "Drop_at_guard"),  # [FIX-TAG1]
+    (r"ของแตกง่าย",                                           "Fragile"),
+    (r"ระวังแตก",                                              "Fragile"),
+    (r"(?:ขอ)?(?:ห่อ)?(?:กันกระแทก|บับเบิล)",                 "Fragile"),
+    (r"เซรามิก",                                               "Fragile"),
+    (r"(?i)fragile",                                           "Fragile"),
+    (r"เปราะบาง",                                              "Fragile"),
+    (r"เครื่องแก้ว",                                           "Fragile"),
+    (r"ขวดแก้ว",                                               "Fragile"),
+    (r"แก้วไวน์|แก้วกาแฟ|แจกันแก้ว",                           "Fragile"),
+    (r"จานกระเบื้อง|กระเบื้อง",                                "Fragile"),
+    (r"กระจก",                                                 "Fragile"),
+    (r"ขวดน้ำหอม",                                             "Fragile"),
+    (r"(?:มี|บรรจุ|ใส่|เป็น)(?:แจกัน)?แก้ว(?:ไวน์|กาแฟ)?",     "Fragile"),
+    (r"(?:มี|บรรจุ|ใส่|เป็น)ขวดแก้ว",                          "Fragile"),
+
+    # Guard / fold / dry tags
+    (r"(?:ฝาก(?:ไว้)?(?:ที่)?)?(?:ป้อมยาม|ป้อมหน้า|ป้อมประตู|รปภ\.?|security)",  "Drop_at_guard"),
     (r"(?:ห้าม|อย่า)พับ(?:\s*เด็ดขาด)?",                     "Do_not_fold"),
     (r"(?:ห้าม|อย่า)เปียก",                                   "Keep_dry"),
-    (r"ส่ง(?:ก่อน|ด่วน)(?:เวลา|บ่าย)?",                     "Time_sensitive"),
 ]
 TAG_PATTERNS: List[Tuple[re.Pattern, str]] = [
     (re.compile(pat), tag) for pat, tag in _KEYWORD_TAGS
@@ -247,11 +321,11 @@ ZIPCODE_RE = re.compile(r"(?<!\d)\d{5}(?!\d)")
 
 ADDRESS_DETAIL_RE = re.compile(
     r"(?:"
-    r"(?:^|(?<![฀-๿A-Za-z]))(?:หมู่บ้าน|ซอย|ซ\.|ถนน|ถ\.|ตรอก|คอนโด|ตู้\s*ปณ\.?|ร้าน[ก-๙]{2,})[^\n]{2,80}"
+    r"(?:^|(?<![฀-๿A-Za-z]))(?:หมู่บ้าน|ซอย|ซ\.|ถนน|ถ\.|ตรอก|อาคาร|ตึก|คอนโด|ห้อง|ชั้น|โครงการ|ตู้\s*ปณ\.?|ร้าน[ก-๙]{2,})[^\n]{2,120}"
     r"|"
     r"\d+(?:/\d+)?"
     r"(?:\s*(?:หมู่\s*\d+|ม\.\s*\d+))?"
-    r"(?:\s*[^\n]{0,80})?"
+    r"(?:\s*[^\n]{0,120})?"
     r")"
 )
 
@@ -283,6 +357,8 @@ INTENT_NEG_KEYWORDS: FrozenSet[str] = frozenset([
     "สั่งได้", "สั่งเลย",
     # Payment confirmations WITHOUT an accompanying address
     "โอนแล้ว", "ยอดโอน", "โอนให้แล้ว",
+    # Conversational missing address references
+    "ที่อยู่เดิม", "เบอร์เดิม", "ส่งที่เดิม", "เหมือนเดิม", "ตามเดิม", "ที่เดิม",
     # [FIX-C10]: Short acknowledgements — "ขอบคุณค่ะ" has no address content.
     # Safe: valid addresses that open with ขอบคุณ always carry a 5-digit zipcode
     # or phone number, so they bypass the shield via the ZIPCODE_RE/PHONE_RE check.

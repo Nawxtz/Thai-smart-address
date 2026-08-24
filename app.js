@@ -134,9 +134,9 @@ function renderCard(originalText, data) {
 
   // Determine CSS class
   const statusClass =
-    data.status === 'Success' || data.status === 'Success with Warnings'
+    data.status === 'Ready' || data.status === 'Success' || data.status === 'Success with Warnings'
       ? 'status-success'
-      : data.status === 'Flagged for Review'
+      : data.status === 'Needs confirmation' || data.status === 'Flagged for Review'
       ? 'status-flagged'
       : 'status-error';
 
@@ -176,7 +176,15 @@ function renderCard(originalText, data) {
       <div class="card-header ${statusClass}">
         <div class="card-status-badge">
           <div class="badge-dot"></div>
-          <span class="badge-text">${escHtml(data.status || 'Error')}</span>
+          <span class="badge-text">${
+            data.status === 'Ready'
+              ? 'พร้อมจัดส่ง (Ready)'
+              : data.status === 'Needs confirmation'
+              ? 'ต้องยืนยันข้อมูล (Needs Confirmation)'
+              : data.status === 'Cannot ship'
+              ? 'ไม่สามารถจัดส่งได้ (Cannot Ship)'
+              : escHtml(data.status || 'Error')
+          }</span>
         </div>
         <div class="card-meta">
           <div class="confidence-bar-wrap">
@@ -245,13 +253,17 @@ function renderCard(originalText, data) {
         <div class="request-id">
           ID&nbsp;${escHtml(reqId)}
         </div>
-        <div style="display:flex;align-items:center;gap:10px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <button class="btn-feedback" style="background:var(--surface);border:1px solid var(--border);color:var(--text)" id="${cardId}-copybtn"
+                  onclick="copyStandardAddress('${cardId}')">
+            📋 คัดลอกที่อยู่
+          </button>
           <div class="feedback-toast" id="${cardId}-toast">
             ✓ บันทึกแล้ว
           </div>
           <button class="btn-feedback" id="${cardId}-fbtn"
                   onclick="submitFeedback('${cardId}')">
-            💾 Save &amp; Submit Correction
+            💾 บันทึกแก้ไข
           </button>
         </div>
       </div>
@@ -355,21 +367,50 @@ function addHistory(statusStr) {
   ).join('');
 }
 
-/* ── Utils ───────────────────────────────────────────────── */
-function escHtml(s) {
-  if (s == null) return '';
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-function escAttr(s) {
-  if (s == null) return '';
-  return String(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
-function tagLabel(t) {
-  const map = {
-    Urgent: '🔴 ด่วน', Fragile: '🔵 แตกง่าย',
-    Drop_at_guard: '🟣 ป้อมยาม', Do_not_fold: '🟢 ห้ามพับ', Keep_dry: '🔵 ห้ามเปียก',
-  };
-  return map[t] || t;
+/* ── Quick Copy ─────────────────────────────────────────── */
+function copyStandardAddress(cardId) {
+  const read = id => (document.getElementById(`${cardId}-${id}`)?.value || '').trim();
+  const receiver = read('receiver');
+  const phone = read('phone');
+  const detail = read('address_detail');
+  const sub = read('sub_district');
+  const dist = read('district');
+  const prov = read('province');
+  const zip = read('zipcode');
+
+  const isBkk = prov === 'กรุงเทพมหานคร' || prov === 'กทม' || prov === 'กทม.';
+  const subPrefix = isBkk ? 'แขวง' : 'ต.';
+  const distPrefix = isBkk ? 'เขต' : 'อ.';
+  const provPrefix = isBkk ? '' : 'จ.';
+
+  let lines = [];
+  if (receiver) lines.push(`ผู้รับ: ${receiver}`);
+  if (phone) lines.push(`เบอร์โทร: ${phone}`);
+
+  let addrParts = [detail];
+  if (sub) addrParts.push(`${subPrefix}${sub}`);
+  if (dist) addrParts.push(`${distPrefix}${dist}`);
+  if (prov) addrParts.push(`${provPrefix}${prov}`);
+  if (zip) addrParts.push(zip);
+
+  lines.push(`ที่อยู่: ${addrParts.filter(Boolean).join(' ')}`);
+
+  const fullText = lines.join('\n');
+
+  navigator.clipboard.writeText(fullText).then(() => {
+    const btn = document.getElementById(`${cardId}-copybtn`);
+    if (btn) {
+      const orig = btn.innerHTML;
+      btn.innerHTML = '✅ คัดลอกแล้ว!';
+      btn.style.color = 'var(--green)';
+      setTimeout(() => {
+        btn.innerHTML = orig;
+        btn.style.color = 'var(--text)';
+      }, 2000);
+    }
+  }).catch(() => {
+    alert('คัดลอกไม่สำเร็จ: กรุณาอนุญาตการเข้าถึงคลิปบอร์ดในเบราว์เซอร์');
+  });
 }
 
 /* ── Auto-test connection on load ─────────────────────────── */

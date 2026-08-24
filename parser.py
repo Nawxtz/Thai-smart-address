@@ -297,11 +297,11 @@ class SmartAddressParser:
                 return None
 
         result = ParseResult(
-            status="Not an Address",
+            status="Cannot ship",
             confidence=0.0,
             processing_ms=self._elapsed(t0),
             warnings=[
-                f"[IntentShield] Rejected: non-address intent "
+                f"[IntentShield] Rejected: non-address or missing delivery address "
                 f"(neg_keyword=True, digit_density={density:.1%})"
             ],
         )
@@ -326,18 +326,21 @@ class SmartAddressParser:
         result.warnings.extend(geo_warns)
 
         if geo_rec:
-            # Only set sub_district when it was explicitly matched in the text
-            # (score contribution from sub_district = 4 points).
-            # When score ≤ 3 the best match came only from district+province/zipcode,
-            # meaning no sub_district token appeared — leave it as None rather than
-            # guessing the first record in that zip bucket.
-            sub_in_text = geo_score >= 4
-            if sub_in_text:
+            _SUB_PFXS = ("ตำบล", "แขวง", "ต.", "แขวง ", "ต ")
+            if self._geo._wb_match(geo_rec.sub_district, text) or any((pfx + geo_rec.sub_district) in text for pfx in _SUB_PFXS):
                 result.sub_district = geo_rec.sub_district
-            result.district     = geo_rec.district
-            result.province     = geo_rec.province
-            if not result.zipcode:
-                result.zipcode  = geo_rec.zipcode
+
+            _DIST_PFXS = ("อำเภอ", "เขต", "อ.", "เขต ", "ที่", "อ ")
+            if (result.sub_district or
+                self._geo._wb_match(geo_rec.district, text) or 
+                any((pfx + geo_rec.district) in text for pfx in _DIST_PFXS) or
+                (geo_rec.district.startswith("เมือง") and ("เมือง" in text or "อ.เมือง" in text or "อำเภอเมือง" in text))):
+                result.district = geo_rec.district
+
+            result.province = geo_rec.province
+            if (result.sub_district or result.district) and not result.zipcode:
+                result.zipcode = geo_rec.zipcode
+                result.warnings.append(f"[AutoFill] Zipcode '{geo_rec.zipcode}' auto-filled from database")
             text = self._strip_geo_tokens(text, geo_rec)
 
         result.tags, text = self._extract_tags(text)
@@ -424,9 +427,9 @@ class SmartAddressParser:
         # "กทม." in "ขาเข้า กทม." means direction toward Bangkok, not the delivery province.
         # Must run after abbreviation expansion so "กทม." is already expanded.
         text = re.sub(r'ขา(?:เข้า|ออก)\s+(?:กรุงเทพมหานคร|[฀-๿]{3,20})', ' ', text)
-        # [FIX-N10] Strip ALL inline "word: value" labels
-        text = re.sub(r'(?:^|(?<=\s))(?:ชื่อ|ที่อยู่|ตำบล|อำเภอ|จังหวัด|ไปรษณีย์|Line\s*ID|FB|IG|Twitter)\s*[:\-]\s*', ' ', text, flags=re.IGNORECASE)
-        text = re.sub(r'(?:^|(?<=\s))[ก-๙A-Za-z][ก-๙A-Za-z_0-9]*\s*:\s*', ' ', text)
+        # [FIX-N10] Strip inline key-value labels (except receiver labels which are needed in Pass -1)
+        text = re.sub(r'(?:^|(?<=\s))(?:ที่อยู่|ตำบล|อำเภอ|จังหวัด|ไปรษณีย์|Line\s*ID|FB|IG|Twitter)\s*[:\-]\s*', ' ', text, flags=re.IGNORECASE)
+        text = re.sub(r'(?:^|(?<=\s))(?!ผู้รับ|ชื่อผู้รับ|ชื่อลูกค้า|ลูกค้าชื่อ|ผู้รับคือ)[ก-๙A-Za-z][ก-๙A-Za-z_0-9]*\s*:\s*', ' ', text)
         # Strip stray trailing dot after Thai char (end-of-string only, not mid-string)
         # Mid-string removal was breaking น.ส. → น.ส (dropped the dot before space)
         text = re.sub(r"([฀-๿])\.$", r"\1", text)
@@ -477,21 +480,11 @@ class SmartAddressParser:
         for pattern, tag in TAG_PATTERNS:
             if pattern.search(text):
                 tags.append(tag)
-                text = pattern.sub(" ", text)
-        return tags, re.sub(r"\s+", " ", text).strip()
+        return list(dict.fromkeys(tags)), text
 
     def _extract_receiver_and_address(
         self, text: str
     ) -> Tuple[Optional[str], Optional[str]]:
-        # [FIX-T8] Protect "เลขที่ N" from connector stripping — preserves house nums
-        text = re.sub(r'เลขที่\s*(\d)', r'\1', text)
-        text = CONNECTOR_PATTERN.sub(" ", text)
-        text = re.sub(r"\b(ด้วยนะ|หน่อยนะ|ด้วย)\b", " ", text)
-        text = re.sub(r'[ก-๙A-Za-z_]+\s*[:\-]\s*', ' ', text)  # FIX-R1 orphan labels
-        text = re.sub(r'(?:ขอบคุณมากๆ|ขอบคุณนะ|ขอบคุณ|รีบส่งนะ|รีบส่ง|รีบนะ|รีบ)(?:\s|$)', ' ', text)
-        text = re.sub(r'(?:^|\s)(?:กท|มา|ด่วนๆ)(?=\s|$)', ' ', text)
-        text = re.sub(r"\s+", " ", text).strip()
-
         receiver: Optional[str] = None
 
         # Pass -1: Explicit "ชื่อผู้รับ:" label anywhere in text  [FIX P-F3]
@@ -507,11 +500,19 @@ class SmartAddressParser:
                 text = text[:label_m.start()] + " " + text[label_m.end():]
                 text = re.sub(r"\s+", " ", text).strip()
 
+        # [FIX-T8] Protect "เลขที่ N" from connector stripping — preserves house nums
+        text = re.sub(r'เลขที่\s*(\d)', r'\1', text)
+        text = CONNECTOR_PATTERN.sub(" ", text)
+        text = re.sub(r"\b(ด้วยนะ|หน่อยนะ|ด้วย)\b", " ", text)
+        text = re.sub(r'[ก-๙A-Za-z_]+\s*[:\-]\s*', ' ', text)  # FIX-R1 orphan labels
+        text = re.sub(r'(?:ขอบคุณมากๆ|ขอบคุณนะ|ขอบคุณ|รีบส่งนะ|รีบส่ง|รีบนะ|รีบ)(?:\s|$)', ' ', text)
+        text = re.sub(r'(?:^|\s)(?:กท|มา|ด่วนๆ)(?=\s|$)', ' ', text)
+        text = re.sub(r"\s+", " ", text).strip()
+
         # Pass A: Honorific anchor — include honorific in returned receiver
         # e.g. "คุณจิรายุ" → receiver = "คุณจิรายุ" (not just "จิรายุ")
         if receiver is None:
-            hm = HONORIFIC_PATTERN.search(text)
-            if hm:
+            for hm in HONORIFIC_PATTERN.finditer(text):
                 try:
                     name_token = hm.group("n")
                 except IndexError:
@@ -522,25 +523,39 @@ class SmartAddressParser:
 
                 # Full span from honorific start to end of matched name
                 full_honorific_span = text[start_idx:end_idx].strip()
+                clean_span = re.sub(r"^ของ", "", full_honorific_span).strip()
+                clean_span = re.sub(r"\s*ที่[ก-๙].*$", "", clean_span).strip()
+
+                # Skip if matched span is actually a stop-word (e.g. "อาคาร", "ซอย", "ตึก")
+                if clean_span in NAME_STOP_WORDS or any(
+                    clean_span.startswith(sw) for sw in NAME_STOP_WORDS
+                ):
+                    continue
 
                 after_text = text[end_idx:]
                 second_m   = re.match(r"\s*([^\s\d/]{2,30})(?=\s|$)", after_text)
 
                 if second_m:
                     candidate = second_m.group(1)
-                    is_stop   = candidate in NAME_STOP_WORDS or any(
-                        candidate.startswith(sw) for sw in NAME_STOP_WORDS
+                    is_stop   = (
+                        candidate in NAME_STOP_WORDS
+                        or any(candidate.startswith(sw) for sw in NAME_STOP_WORDS)
+                        or candidate.startswith("ที่")
+                        or candidate in self._geo.district_names
+                        or candidate in self._geo.province_names
+                        or candidate in self._geo.sub_district_names
                     )
                     if not is_stop:
-                        receiver  = f"{full_honorific_span} {candidate}".strip()
+                        receiver  = f"{clean_span} {candidate}".strip()
                         end_idx  += second_m.end()
                     else:
-                        receiver  = full_honorific_span
+                        receiver  = clean_span
                 else:
-                    receiver = full_honorific_span
+                    receiver = clean_span
 
                 if receiver:
                     text = text[:start_idx] + " " + text[end_idx:]
+                    break
 
         # If receiver was set by Pass -1 (label), still strip pre-address preamble
         if receiver is not None:
@@ -590,10 +605,15 @@ class SmartAddressParser:
             _stripped = re.sub(r'^.*?(?=\d|(?:อาคาร|ตึก|คอนโด|ห้อง|ชั้น))', '', text, count=1, flags=re.DOTALL).strip()
             if _stripped and _stripped != text:
                 text = _stripped
-        # FIX [P-F4]: Strip trailing bracket/quote punctuation from receiver.
+        # FIX [P-F4]: Strip trailing bracket/quote punctuation and location connectors from receiver.
         if receiver:
+            receiver = re.sub(r"\s+ที่\s*[ก-๙]+.*$", "", receiver).strip()
             receiver = re.sub(r"[\s()\[\]{}<>\"\']+$", "", receiver).strip()
-            if len(receiver) < 2:
+            if (
+                len(receiver) < 2
+                or receiver in NAME_STOP_WORDS
+                or any(receiver.startswith(sw) for sw in NAME_STOP_WORDS)
+            ):
                 receiver = None
 
         # [FIX-P3] Pass D: Trailing personal name.
@@ -633,12 +653,90 @@ class SmartAddressParser:
                         text = remaining[:tail_m.start(1)].rstrip()
 
         text = re.sub(r"\s+", " ", text).strip()
-        address_detail = text.strip(" ,.-") or None
+        address_detail = self._clean_address_detail(text.strip(" ,.-")) or None
 
         return (
             receiver.strip() if receiver else None,
-            address_detail.strip() if address_detail else None,
+            address_detail,
         )
+
+    @staticmethod
+    def _clean_address_detail(text: Optional[str]) -> Optional[str]:
+        if not text:
+            return None
+        t = text
+        _NOISE_PATS = [
+            # Urgent & instructions
+            r"ของต้องถึง(?:ภายใน[^\s]+|วัน[^\s]+|พรุ่งนี้|ด่วน)?",
+            r"ต้องถึง(?:ภายใน[^\s]+|วัน[^\s]+|พรุ่งนี้|ด่วน)?",
+            r"ของขวัญต้องถึงภายใน[^\s]+",
+            r"(?:ต้อง)?ใช้(?:ในงาน)?(?:วัน[^\s]+|พรุ่งนี้|ด่วน)?",
+            r"ต้องการใช้พรุ่งนี้",
+            r"เพราะต้องใช้[^\s]*",
+            r"ขอให้ถึง(?:ก่อนวัน[^\s]+|เร็วที่สุด|ภายใน[^\s]+)",
+            r"(?:ขอให้|ฝาก)?(?:จัด)?ส่ง(?:ให้)?(?:ภายในวัน[^\s]+|วันนี้นะคะ|วันนี้|ก่อนวัน[^\s]+|ด่วน(?:ที่สุด|มาก)?|เร็ว(?:ที่สุด)?)",
+            r"(?:ขอ)?ส่งก่อนเที่ยง[^\s]*",
+            r"ก่อนเที่ยง[^\s]*",
+            r"ฝากจัด[^\s]*",
+            r"รบกวนส่งด่วนมาก|รบกวนส่งเร็ว",
+            r"ขอส่งด่วน(?:ที่สุด)?",
+            r"ขอส่งเร็ว(?:ที่สุด)?",
+            r"รีบส่ง(?:ให้หน่อย|นะคะ|นะ|ด้วย)?",
+            r"ถ้าเป็นไปได้ขอ[^\s]*",
+            r"(?:ถึงก่อน|ถึงภายใน|ก่อนวัน|ภายในวัน|ในงาน|วันเสาร์|วันอาทิตย์|วันจันทร์|วันอังคาร|วันพุธ|วันพฤหัส|วันศุกร์|วันพรุ่งนี้|วันนี้|พรุ่งนี้)[^\s]*",
+            r"(?:จัด)?ส่ง(?:ให้)?(?:เร็ว|ด่วน)[^\s]*",
+            r"(?:เร็ว|ด่วน)(?:ที่สุด|มาก|ๆ)?",
+            r"(?:จัด)?ภายใน[^\s]*",
+            r"ใช้พรุ่งนี้",
+            r"วันพรุ่งนี้",
+            r"พรุ่งนี้",
+            r"วันนี้",
+            r"ด่วนมาก",
+            r"ด่วน",
+
+            # Fragile & products
+            r"(?:ของ|สินค้า|ข้างใน|ในกล่อง|กล่องนี้|กล่อง)?\s*(?:เป็น|มี)?\s*(?:เครื่องแก้วและเซรามิก|จานเซรามิกและแก้วไวน์|จานเซรามิก|เซรามิก|ขวดน้ำหอม|แก้วกาแฟ|แก้วไวน์|แจกันแก้ว|ขวดแก้ว|เครื่องแก้ว|กระจก|จานกระเบื้อง|กระเบื้อง|ของเปราะบาง)(?:หลายใบ)?(?:ค่ะ|ครับ|นะคะ)?",
+            r"(?:ฝาก)?ระวังแตก(?:ด้วย(?:ค่ะ|ครับ|นะคะ)?)?",
+            r"(?:ขอ)?(?:ห่อ)?(?:กันกระแทก|บับเบิล)(?:หลายชั้น)?",
+            r"ขอแพ็กแน่นๆ",
+            r"กล่องนี้ไม่แตกง่าย(?:ครับ|ค่ะ)?",
+            r"กล่องนี้มี(?:แจกัน)?แก้ว",
+            r"มีแจกันแก้ว|มีแก้ว",
+            r"กล่องนี้",
+            r"(?:รบกวน|ฝาก)?ติด(?:สติ๊กเกอร์)?\s*(?:fragile)?",
+            r"ของแตกง่าย(?:นะคะ|นะ|ครับ|ค่ะ)?",
+            r"หลายใบ|หลายชั้น",
+            r"ฝากติด",
+
+            # Delivery mode / negative
+            r"ไม่มีของแตก(?:ครับ|ค่ะ)?",
+            r"ของไม่แตก(?:ครับ|ค่ะ)?",
+            r"ไม่มีคำสั่งพิเศษ(?:ครับ|ค่ะ)?",
+            r"ไม่ต้อง\s*(?:ติด)?\s*แท็ก(?:ครับ|ค่ะ)?",
+            r"ไม่ต้องรีบ(?:นะคะ|นะ|ครับ|ค่ะ)?",
+            r"ไม่ต้อง",
+            r"(?:ส่ง)?ตามรอบ(?:ปกติ)?(?:ได้)?(?:เลย)?(?:ครับ|ค่ะ|นะคะ)?",
+            r"ส่ง(?:ได้ตาม)?ปกติ(?:ครับ|ค่ะ)?",
+            r"ส่งธรรมดาได้(?:เลย(?:ครับ|ค่ะ)?)?",
+            r"ได้ตามปกติ",
+            r"ปกติ",
+
+            # Stray remaining connectors / preambles / suffixes / isolated province tokens
+            r"(?:^|\s)ที่(?:เชียงใหม่|นนทบุรี|กรุงเทพมหานคร|ภูเก็ต|ชลบุรี|ขอนแก่น|ปทุมธานี|กาญจนบุรี|ลพบุรี|เพชรบุรี|ลำพูน|อุดรธานี|นครราชสีมา)(?=\s|$)",
+            r"(?:^|\s)(?:ช่วยส่งให้|ช่วยส่ง|ส่งให้|จัดส่งให้|ช่วย|จัดส่ง|ของเป็น|เป็นจาน|เป็นขวด|ในกล่องมี|ข้างในเป็น|มีของ|สิน|ของ|เป็น|และ|หรือ|ขอ|ฝาก|รบกวน|เพราะ|หน่อย|รหัส|เลยนะ|เลย|ด้วยนะ|ด้วย|ครับ|ค่ะ|คะ|นะคะ|นะค่ะ|จ้า|ค้า|วันน|พรุ่งน|จัด|ภายใน|เร็ว|ด่วน|สุด|มี|ถึงก่อนวันเสาร|ภายในวันศุกร)(?=\s|$)",
+        ]
+        for p in _NOISE_PATS:
+            t = re.sub(p, " ", t, flags=re.IGNORECASE)
+        # Strip isolated stray vowels / tone marks at word boundaries or ends
+        t = re.sub(r"(?:^|\s)[\u0E30-\u0E39\u0E47-\u0E4E]+(?=\s|$)", " ", t)
+        t = re.sub(r"[\u0E30-\u0E39\u0E47-\u0E4E]+$", "", t)
+        t = re.sub(r"(?:^|\s)หมู่\s*$", " ", t)
+        t = re.sub(r"\s+", " ", t).strip(" ,.-")
+        if t in ("ช่วย", "ส่ง", "จัดส่ง", "รบกวน", "ฝาก", "ที่", "แถว", "ช่วยส่งให้", "ส่งให้", "ค่ะ", "ครับ", "นะคะ"):
+            return None
+        if len(t) < 2:
+            return None
+        return t or None
 
     # ── Phase B ───────────────────────────────────────────────────────────────
 
@@ -651,15 +749,19 @@ class SmartAddressParser:
         result.warnings.extend(fuzzy_warns)
 
         if fuzzy_rec:
+            # If result already has a known province and fuzzy_rec belongs to a different province, reject cross-province hallucination
+            if result.province and fuzzy_rec.province != result.province:
+                return result
+
             # Only copy sub_district when fuzzy actually matched a sub_district token.
-            # If corrections only contain district/province matches, the sub_district
-            # was inferred from the DB row — keep it None rather than guessing.
-            sub_corrected = any(c.startswith('ตำบล') for c in corrections)
+            sub_corrected = any(c.startswith('ตำบล') and fuzzy_rec.sub_district in c for c in corrections)
             if sub_corrected:
                 result.sub_district = result.sub_district or fuzzy_rec.sub_district
-            result.district     = result.district     or fuzzy_rec.district
+            dist_corrected = any(c.startswith('อำเภอ') and fuzzy_rec.district in c for c in corrections)
+            if dist_corrected:
+                result.district = result.district or fuzzy_rec.district
             result.province     = result.province     or fuzzy_rec.province
-            if not result.zipcode:
+            if not result.zipcode and (sub_corrected or dist_corrected):
                 result.zipcode  = fuzzy_rec.zipcode
             for c in corrections:
                 result.warnings.append(f"[FuzzyCorrection] {c}")
@@ -703,22 +805,10 @@ class SmartAddressParser:
     def _compute_confidence(self, result: ParseResult) -> ParseResult:
         filled = sum(1 for f in self._CONFIDENCE_FIELDS if getattr(result, f, None))
         result.confidence = round(filled / len(self._CONFIDENCE_FIELDS), 2)
-
-        if result.confidence < 0.57:
-            result.status = "Flagged for Review"
-            msg = "Low confidence — flagged for human review"
-            if msg not in result.warnings:
-                result.warnings.append(msg)
-        elif result.confidence < 0.86:
-            result.status = "Success with Warnings"
         return result
 
     @staticmethod
     def _strict_validate(result: ParseResult) -> ParseResult:
-        critical_missing = [
-            f for f in ("province", "sub_district", "receiver")
-            if not getattr(result, f, None)
-        ]
         receiver_val  = result.receiver or ""
         receiver_bare = re.sub(r"[^฀-๿a-zA-Z]", "", receiver_val)
         receiver_garbage = bool(receiver_val) and len(receiver_bare) < 2
@@ -729,30 +819,67 @@ class SmartAddressParser:
             if getattr(result, f, None)
         )
 
-        flag_reasons: List[str] = []
-        # [FIX-P5]: Only 0–1 fields extracted means this is not an address at all
-        # (e.g. "โทร 0812345678" → phone only; "คุณสมชาย" → receiver only).
-        # Return "Not an Address" rather than "Flagged for Review" so the intent
-        # classification is correct and the caller does not queue it for human review.
-        if fields_filled <= 1:
-            result.status     = "Not an Address"
+        # 1. CANNOT SHIP (Insufficient core prerequisites to dispatch a courier)
+        if result.status in ("Not an Address", "Cannot ship", "Error") or fields_filled <= 1:
+            result.status     = "Cannot ship"
             result.confidence = 0.0
-            result.warnings.append(
-                "[StrictValidation] Only 1 field extracted — not an address"
-            )
+            if "[StrictValidation] Cannot ship: insufficient data" not in result.warnings:
+                result.warnings.append("[StrictValidation] Cannot ship: insufficient data")
             return result
-        if critical_missing:
-            flag_reasons.append(f"missing: {', '.join(critical_missing)}")
+
+        if not result.receiver or not result.phone:
+            result.status     = "Cannot ship"
+            result.confidence = min(result.confidence, 0.40)
+            missing = []
+            if not result.receiver: missing.append("receiver")
+            if not result.phone: missing.append("phone")
+            result.warnings.append(f"[StrictValidation] Cannot ship: missing {', '.join(missing)}")
+            return result
+
+        if not result.province and not result.district and not result.sub_district:
+            result.status     = "Cannot ship"
+            result.confidence = min(result.confidence, 0.30)
+            result.warnings.append("[StrictValidation] Cannot ship: zero geographic data")
+            return result
+
+        if not result.address_detail and not result.district and not result.sub_district and not result.zipcode:
+            result.status     = "Cannot ship"
+            result.confidence = min(result.confidence, 0.30)
+            result.warnings.append("[StrictValidation] Cannot ship: only province mentioned without district, zipcode, or address detail")
+            return result
+
+        # 2. NEEDS CONFIRMATION (Actionable partial address, missing house number, or unconfirmed auto-fills)
+        needs_confirm_reasons: List[str] = []
+        addr_val = result.address_detail or ""
+        has_house_num = bool(
+            re.search(r"\d", addr_val)
+            or re.search(r"(?:คอนโด|อาคาร|ตึก|ห้อง|ชั้น|หอพัก)", addr_val)
+        )
+        if not result.address_detail or "ไม่มี" in addr_val or not has_house_num:
+            needs_confirm_reasons.append("missing house number / address detail")
+        if not result.sub_district:
+            needs_confirm_reasons.append("missing sub_district")
+        if not result.district:
+            needs_confirm_reasons.append("missing district")
+        if not result.zipcode:
+            needs_confirm_reasons.append("missing zipcode")
         if receiver_garbage:
-            flag_reasons.append(f"receiver '{receiver_val}' is too short (garbage token)")
-        if fields_filled < 3:
-            flag_reasons.append(f"only {fields_filled}/7 fields extracted")
+            needs_confirm_reasons.append(f"receiver '{receiver_val}' is too short")
+        if (
+            result.confidence < 0.90
+            or any("AutoFill" in w for w in result.warnings)
+        ):
+            needs_confirm_reasons.append("auto-filled or partial match")
 
-        if flag_reasons:
-            result.status     = "Flagged for Review"
-            result.confidence = min(result.confidence, 0.50)
-            result.warnings.append("[StrictValidation] " + "; ".join(flag_reasons))
+        if needs_confirm_reasons:
+            result.status     = "Needs confirmation"
+            result.confidence = min(result.confidence, 0.75) if result.confidence == 1.0 else result.confidence
+            result.warnings.append("[StrictValidation] Needs confirmation: " + "; ".join(needs_confirm_reasons))
+            return result
 
+        # 3. READY (All 7 fields present, verified and consistent)
+        result.status     = "Ready"
+        result.confidence = 1.0
         return result
 
     @staticmethod

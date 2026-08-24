@@ -178,14 +178,19 @@ class GeoDatabase:
         """
         warnings_out: List[str] = []
 
-        _SUB_PFXS  = ("ตำบล", "แขวง")
-        _DIST_PFXS = ("อำเภอ", "เขต")
-        _PROV_PFXS = ("จังหวัด",)
+        _SUB_PFXS  = ("ตำบล", "แขวง", "ต.", "แขวง ", "ต ")
+        _DIST_PFXS = ("อำเภอ", "เขต", "อ.", "เขต ", "ที่", "อ ")
+        _PROV_PFXS = ("จังหวัด", "จ.", "ที่", "จ ", "แถว")
 
-        def _score_field(term: str, pfxs: tuple) -> bool:
+        def _score_field(term: str, pfxs: tuple, is_district: bool = False, prov: str = "") -> bool:
             if self._wb_match(term, text):
                 return True
-            return any((pfx + term) in text for pfx in pfxs)
+            if any((pfx + term) in text for pfx in pfxs):
+                return True
+            if is_district and term.startswith("เมือง") and ("เมือง" in text or "อ.เมือง" in text or "อำเภอเมือง" in text):
+                if prov and (prov in text or any(pfx + prov in text for pfx in _PROV_PFXS)):
+                    return True
+            return False
 
         if zipcode_hint and zipcode_hint in self._zip_map:
             pool: List[GeoRecord] = self._zip_map[zipcode_hint]
@@ -205,7 +210,7 @@ class GeoDatabase:
         for rec in pool:
             score = 0
             if _score_field(rec.sub_district, _SUB_PFXS):  score += 4
-            if _score_field(rec.district,     _DIST_PFXS):  score += 3
+            if _score_field(rec.district,     _DIST_PFXS, is_district=True, prov=rec.province):  score += 3
             if _score_field(rec.province,     _PROV_PFXS):  score += 2
             if rec.zipcode and rec.zipcode in text:          score += 1
             if score > 0:

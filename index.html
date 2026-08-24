@@ -34,6 +34,7 @@
   --amber:          #f5a623;
   --amber-dim:      #3d2a0a;
   --amber-glow:     rgba(245,166,35,0.12);
+  --amber-border:   rgba(245,166,35,0.40);
 
   --green:          #2dcc70;
   --green-dim:      #0b2d1a;
@@ -369,8 +370,8 @@ textarea#chat-input:focus {
   box-shadow: 0 0 0 1px rgba(45,204,112,0.08), 0 4px 24px rgba(45,204,112,0.06);
 }
 .result-card.status-flagged {
-  border-color: var(--red-border);
-  box-shadow: 0 0 0 1px rgba(232,57,74,0.08), 0 4px 24px rgba(232,57,74,0.06);
+  border-color: var(--amber-border);
+  box-shadow: 0 0 0 1px rgba(245,166,35,0.08), 0 4px 24px rgba(245,166,35,0.06);
 }
 .result-card.status-error {
   border-color: var(--red-border);
@@ -386,7 +387,7 @@ textarea#chat-input:focus {
   border-bottom: 1px solid var(--border-dim);
 }
 .card-header.status-success { background: var(--green-dim); }
-.card-header.status-flagged,
+.card-header.status-flagged { background: var(--amber-dim); }
 .card-header.status-error   { background: var(--red-dim);   }
 
 .card-status-badge {
@@ -403,10 +404,10 @@ textarea#chat-input:focus {
   border-radius: 50%;
 }
 .status-success .badge-dot { background: var(--green); box-shadow: 0 0 8px var(--green); }
-.status-flagged .badge-dot,
+.status-flagged .badge-dot { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
 .status-error   .badge-dot { background: var(--red);   box-shadow: 0 0 8px var(--red);   }
 .status-success .badge-text { color: var(--green); }
-.status-flagged .badge-text,
+.status-flagged .badge-text { color: var(--amber); }
 .status-error   .badge-text { color: var(--red);   }
 
 .card-meta {
@@ -438,7 +439,7 @@ textarea#chat-input:focus {
   transition: width 0.6s ease;
 }
 .status-success .confidence-fill { background: var(--green); }
-.status-flagged .confidence-fill,
+.status-flagged .confidence-fill { background: var(--amber); }
 .status-error   .confidence-fill { background: var(--red);   }
 
 .confidence-pct {
@@ -824,12 +825,19 @@ textarea#chat-input:focus {
       document.getElementById('empty-state').style.display = 'none';
       const panel = document.getElementById('results-panel');
 
-      // แยกสีตามสถานะ (เขียว, เหลือง, แดง)
+      // แยกสีและข้อความตามสถานะ 3 ระดับ (เขียว, เหลือง/ส้ม, แดง)
       let statusClass = "status-success";
-      let statusTextTh = "สำเร็จ";
-      if (data.status === "Flagged for Review") { statusClass = "status-flagged"; statusTextTh = "ต้องตรวจสอบ"; }
-      else if (data.status === "Error" || data.status === "Not an Address") { statusClass = "status-error"; statusTextTh = "ล้มเหลว"; }
-      else if (data.status === "Success with Warnings") { statusClass = "status-flagged"; statusTextTh = "มีข้อควรระวัง"; }
+      let statusTextTh = "พร้อมจัดส่ง (Ready)";
+      if (data.status === "Ready" || data.status === "Success") {
+          statusClass = "status-success";
+          statusTextTh = "พร้อมจัดส่ง (Ready)";
+      } else if (data.status === "Needs confirmation" || data.status === "Flagged for Review" || data.status === "Success with Warnings") {
+          statusClass = "status-flagged";
+          statusTextTh = "ต้องยืนยันข้อมูล (Needs Confirmation)";
+      } else { // "Cannot ship", "Not an Address", "Error"
+          statusClass = "status-error";
+          statusTextTh = "ไม่สามารถจัดส่งได้ (Cannot Ship)";
+      }
 
       // จัดการ Tags
       let tagsHtml = "";
@@ -952,9 +960,13 @@ textarea#chat-input:focus {
       if (strip.innerText.includes("ยังไม่มีประวัติ")) strip.innerHTML = '';
       
       const dot = document.createElement('div');
-      if (status.includes("Success")) dot.className = "history-dot s";
-      else if (status.includes("Flagged") || status.includes("Warnings")) dot.className = "history-dot f";
-      else dot.className = "history-dot e";
+      if (status === "Ready" || status === "Success" || (status && status.includes("Success"))) {
+          dot.className = "history-dot s";
+      } else if (status === "Needs confirmation" || status === "Flagged for Review" || (status && status.includes("Warnings"))) {
+          dot.className = "history-dot f";
+      } else {
+          dot.className = "history-dot e";
+      }
       
       dot.title = status;
       strip.appendChild(dot);

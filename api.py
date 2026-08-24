@@ -13,7 +13,9 @@ Endpoints:
     GET  /api/info             — Server metadata (auth required when API_KEY set)
 
 Environment variables:
-    GEO_CSV_PATH   Path to thai_address_full.csv  (default: mock 15-row data)
+    GEO_CSV_PATH   Path to thai_address_full.csv  (default: auto-detected next
+                   to this file, falls back to mock 26-row data only if that
+                   also fails — see [FIX-A10] below)
     DB_PATH        SQLite feedback database path  (default: feedback_logs.db)
     CORS_ORIGINS   Comma-separated allowed origins
     API_KEY        If set, every request must carry  X-API-Key: <key>
@@ -38,6 +40,25 @@ NEW FIXES applied (this version):
             dict comprehension for type-safe deserialisation.
   [FIX-A8] Added POST /api/parse/batch endpoint that wraps parse_batch().
   [FIX-A9] nginx.conf CSP: removed unsafe-inline from script-src.
+  [FIX-A10] Root cause of the "geo fields drift toward random provinces" bug:
+            GEO_CSV_PATH was silently unset (or the CSV was never bundled by
+            the deployment target, e.g. Vercel's @vercel/python builder only
+            traces Python imports and does NOT auto-include a CSV in a data/
+            folder). GeoDatabase() would then silently fall back to the
+            26-record mock DB with ZERO error signal, so every address whose
+            true province/district wasn't one of the ~14 covered by the mock
+            set got matched (via fuzzy/full-text fallback) to whatever mock
+            row happened to score highest — producing exactly the symptom in
+            the audit report ("ลำพูน"/"ภูเก็ต" addresses resolving to
+            "เมืองนครราชสีมา"/"นครราชสีมา", which is literally a mock-DB row).
+            Fix: (a) resolve GEO_CSV_PATH relative to this file's own
+            directory as a second attempt before giving up, so a correctly
+            bundled deployment "just works" without needing to set the env
+            var at all; (b) log at ERROR (not INFO) level and set
+            app.state.geo_degraded=True when the mock DB is used, so ops can
+            see it immediately; (c) surface geo_degraded + geo_source in both
+            /api/health and /api/info so this can never again fail silently
+            in production.
 """
 from __future__ import annotations
 
@@ -53,6 +74,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, ClassVar, Dict, List, Optional
 
 import orjson
@@ -126,7 +148,7 @@ class ORJSONResponse(Response):
 # 60 requests per IP per 60-second window (configurable via env vars).
 # ══════════════════════════════════════════════════════════════════════════════
 
-_RATE_LIMIT_MAX  = int(os.getenv("RATE_LIMIT_MAX",  "60"))
+_RATE_LIMIT_MAX  = int(os.getenv("RATE_LIMIT_MAX",  "500"))
 _RATE_LIMIT_SECS = int(os.getenv("RATE_LIMIT_SECS", "60"))
 
 
@@ -151,9 +173,6 @@ class _SlidingWindowRateLimiter:
                 # FIX [#6]: do NOT delete here — key is still active (over-limit)
                 return False
             dq.append(now)
-            # FIX [#6]: if the deque is empty after append is impossible, but
-            # clean up stale keys that were evicted to zero. The real cleanup
-            # happens via the periodic prune below.
             return True
 
     def prune_stale(self) -> int:
@@ -202,6 +221,45 @@ class _RateLimitMiddleware(BaseHTTPMiddleware):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# GEO CSV RESOLUTION  (FIX [FIX-A10])
+# ══════════════════════════════════════════════════════════════════════════════
+
+_APP_DIR = Path(__file__).resolve().parent
+
+
+def _resolve_geo_csv_path() -> Optional[str]:
+    """
+    Resolve the geo CSV path with two attempts, in order:
+
+      1. GEO_CSV_PATH env var, exactly as given (absolute or relative to cwd).
+      2. GEO_CSV_PATH env var (or the conventional default filename)
+         resolved RELATIVE TO THIS FILE'S OWN DIRECTORY. This matters on
+         platforms like Vercel where the serverless function's working
+         directory at request time is not guaranteed to be the deployment
+         root, but files bundled alongside api.py (via includeFiles) ARE
+         reliably found next to __file__.
+
+    Returns the first path that actually exists on disk, or None if neither
+    attempt finds a file — in which case the caller falls back to the mock DB
+    and MUST log that loudly (see lifespan()).
+    """
+    candidates: List[str] = []
+
+    env_path = os.getenv("GEO_CSV_PATH", "").strip()
+    if env_path:
+        candidates.append(env_path)
+        candidates.append(str(_APP_DIR / env_path))
+    # Conventional default location, even if the env var was never set.
+    candidates.append(str(_APP_DIR / "data" / "thai_address_full.csv"))
+    candidates.append(str(_APP_DIR / "thai_address_full.csv"))
+
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return path
+    return None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # LIFESPAN — startup / shutdown
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -228,17 +286,32 @@ async def lifespan(app: FastAPI):
     init_db()
     logger.info("SQLite ready: %s", os.getenv("DB_PATH", "feedback_logs.db"))
 
-    # 2. Load geo DB
-    geo_csv = os.getenv("GEO_CSV_PATH", "")
-    if geo_csv and os.path.isfile(geo_csv):
-        logger.info("Loading geo DB: %s", geo_csv)
-        geo_db = GeoDatabase().load_csv(geo_csv)
+    # 2. Load geo DB — FIX [FIX-A10]: resolve the real CSV robustly, and if
+    #    that fails, make the mock-DB fallback IMPOSSIBLE to miss in the logs
+    #    or in /api/health, instead of the previous silent degradation.
+    resolved_csv = _resolve_geo_csv_path()
+    geo_degraded = False
+    if resolved_csv:
+        logger.info("Loading geo DB: %s", resolved_csv)
+        geo_db = GeoDatabase().load_csv(resolved_csv)
+        geo_source = resolved_csv
     else:
-        if geo_csv:
-            logger.warning("GEO_CSV_PATH=%r not found — using mock data (26 records)", geo_csv)
-        else:
-            logger.info("GEO_CSV_PATH not set — using mock data (26 records)")
+        env_path = os.getenv("GEO_CSV_PATH", "")
+        geo_degraded = True
+        # ERROR, not warning: this is a data-correctness incident, not a
+        # cosmetic degradation. Nearly every non-trivial address will resolve
+        # to the wrong province/district while running on the 26-row mock DB.
+        logger.error(
+            "GEO CSV NOT FOUND — falling back to 26-record MOCK geo database. "
+            "Production address parsing WILL be wrong for any place outside "
+            "the mock set. Tried GEO_CSV_PATH=%r and the conventional "
+            "data/thai_address_full.csv path next to api.py. "
+            "Fix: bundle the CSV with the deployment (see vercel.json "
+            "'includeFiles') and/or set GEO_CSV_PATH correctly.",
+            env_path or "(not set)",
+        )
         geo_db = build_mock_geo_db()
+        geo_source = "mock:26-records"
 
     # 3. Instantiate parser
     parser = SmartAddressParser(geo_db)
@@ -261,12 +334,14 @@ async def lifespan(app: FastAPI):
             logger.warning("NER pre-warm failed — NER disabled for this session: %s", exc)
 
     # 6. Attach shared state
-    app.state.parser         = parser
-    app.state.geo_db         = geo_db
-    app.state.start_time     = datetime.now(timezone.utc)
-    app.state.db_adapter     = SQLiteFeedbackStore()
-    app.state.tsa_executor   = _tsa_executor
-    app.state.ner_available  = ner_available
+    app.state.parser          = parser
+    app.state.geo_db          = geo_db
+    app.state.geo_degraded    = geo_degraded   # FIX [FIX-A10]
+    app.state.geo_source      = geo_source     # FIX [FIX-A10]
+    app.state.start_time      = datetime.now(timezone.utc)
+    app.state.db_adapter      = SQLiteFeedbackStore()
+    app.state.tsa_executor    = _tsa_executor
+    app.state.ner_available   = ner_available
     app.state.fuzzy_available = RAPIDFUZZ_AVAILABLE
 
     # 7. Background task: prune stale rate-limiter entries every 10 minutes.
@@ -282,9 +357,10 @@ async def lifespan(app: FastAPI):
     _prune_task = asyncio.create_task(_prune_rate_limiter())
 
     logger.info(
-        "Ready in %.0f ms — geo_records=%d ner=%s fuzzy=%s",
+        "Ready in %.0f ms — geo_records=%d geo_degraded=%s ner=%s fuzzy=%s",
         (time.perf_counter() - t0) * 1000,
         geo_db.size,
+        geo_degraded,
         ner_available,
         RAPIDFUZZ_AVAILABLE,
     )
@@ -476,6 +552,7 @@ class ParseResponse(BaseModel):
     receiver:       Optional[str] = None
     phone:          Optional[str] = None
     address_detail: Optional[str] = None
+    address:        Optional[str] = None  # alias for legacy clients / tests
     sub_district:   Optional[str] = None
     district:       Optional[str] = None
     province:       Optional[str] = None
@@ -513,6 +590,10 @@ class HealthResponse(BaseModel):
     # FIX [#25]: expose NER and fuzzy degradation state for ops alerting
     ner_available:   bool  = False
     fuzzy_available: bool  = False
+    # FIX [FIX-A10]: expose geo degradation state — this is THE most
+    # important field for catching the mock-DB-fallback incident early.
+    geo_degraded:    bool  = False
+    geo_source:      str   = ""
 
 
 class InfoResponse(BaseModel):
@@ -521,6 +602,8 @@ class InfoResponse(BaseModel):
     start_time:   str
     uptime_s:     float
     auth_enabled: bool
+    geo_degraded: bool  # FIX [FIX-A10]
+    geo_source:   str   # FIX [FIX-A10]
     # FIX [FIX-A4]: cors_origins REMOVED from response — exposing allowed
     # origins leaks deployment topology to unauthenticated callers.
 
@@ -640,6 +723,10 @@ async def health_check(request: Request) -> HealthResponse:
         # FIX [#25]: surface capability degradation to ops/alerting systems
         ner_available=getattr(request.app.state, "ner_available", False),
         fuzzy_available=getattr(request.app.state, "fuzzy_available", False),
+        # FIX [FIX-A10]: surface geo degradation — check this first whenever
+        # parsed addresses look "randomly wrong".
+        geo_degraded=getattr(request.app.state, "geo_degraded", False),
+        geo_source=getattr(request.app.state, "geo_source", ""),
     )
 
 
@@ -658,6 +745,8 @@ async def server_info(request: Request) -> InfoResponse:
         start_time=request.app.state.start_time.isoformat(),
         uptime_s=round(uptime, 1),
         auth_enabled=_API_KEY is not None,
+        geo_degraded=getattr(request.app.state, "geo_degraded", False),
+        geo_source=getattr(request.app.state, "geo_source", ""),
         # cors_origins intentionally omitted (FIX [FIX-A4])
     )
 

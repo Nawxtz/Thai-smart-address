@@ -2,7 +2,19 @@
   "builds": [
     {
       "src": "api.py",
-      "use": "@vercel/python"
+      "use": "@vercel/python",
+      "config": {
+        "includeFiles": [
+          "data/thai_address_full.csv",
+          "constants.py",
+          "database.py",
+          "geo_engine.py",
+          "models.py",
+          "parser.py",
+          "index.html"
+        ],
+        "maxLambdaSize": "50mb"
+      }
     }
   ],
   "routes": [
@@ -10,5 +22,8 @@
       "src": "/(.*)",
       "dest": "api.py"
     }
-  ]
+  ],
+  "env": {
+    "GEO_CSV_PATH": "data/thai_address_full.csv"
+  }
 }
