@@ -343,6 +343,35 @@ class SmartAddressParser:
                 result.warnings.append(f"[AutoFill] Zipcode '{geo_rec.zipcode}' auto-filled from database")
             text = self._strip_geo_tokens(text, geo_rec)
 
+        # Zipcode-driven Auto-Fill: Infer missing province, district, and sub-district from Zipcode
+        if result.zipcode and result.zipcode in self._geo._zip_map:
+            zip_pool = self._geo._zip_map[result.zipcode]
+            if not result.province and zip_pool:
+                result.province = zip_pool[0].province
+                result.warnings.append(f"[AutoFill] Province '{result.province}' auto-filled from zipcode {result.zipcode}")
+            if not result.district and zip_pool:
+                dists = list(dict.fromkeys(r.district for r in zip_pool))
+                if len(dists) == 1:
+                    result.district = dists[0]
+                    result.warnings.append(f"[AutoFill] District '{result.district}' auto-filled from zipcode {result.zipcode}")
+                elif geo_rec and geo_rec.district in dists:
+                    result.district = geo_rec.district
+                    result.warnings.append(f"[AutoFill] District '{result.district}' inferred from zipcode {result.zipcode}")
+                else:
+                    result.district = dists[0]
+                    result.warnings.append(f"[AutoFill] District '{result.district}' inferred from zipcode {result.zipcode}")
+            if not result.sub_district and zip_pool:
+                subs = list(dict.fromkeys(r.sub_district for r in zip_pool))
+                if len(subs) == 1:
+                    result.sub_district = subs[0]
+                    result.warnings.append(f"[AutoFill] Sub-district '{result.sub_district}' auto-filled from zipcode {result.zipcode}")
+                elif geo_rec and geo_rec.sub_district in subs:
+                    result.sub_district = geo_rec.sub_district
+                    result.warnings.append(f"[AutoFill] Sub-district '{result.sub_district}' inferred from zipcode {result.zipcode}")
+                else:
+                    result.sub_district = subs[0]
+                    result.warnings.append(f"[AutoFill] Sub-district '{result.sub_district}' inferred from zipcode {result.zipcode}")
+
         result.tags, text = self._extract_tags(text)
         result.receiver, result.address_detail = self._extract_receiver_and_address(text)
         return result
@@ -690,14 +719,16 @@ class SmartAddressParser:
             r"ใช้พรุ่งนี้",
             r"วันพรุ่งนี้",
             r"พรุ่งนี้",
-            r"วันนี้",
+            r"ด่วนจี๋",
             r"ด่วนมาก",
+            r"ด่วนที่สุด",
             r"ด่วน",
 
             # Fragile & products
             r"(?:ของ)?(?:มี)?(?:เครื่องแก้วและเซรามิก|จานเซรามิกและแก้วไวน์|จานเซรามิก|เซรามิก|ขวดน้ำหอม|แก้วกาแฟ|แก้วไวน์|แจกันแก้ว|ขวดแก้ว|เครื่องแก้ว|กระจก|จานกระเบื้อง|กระเบื้อง|ของเปราะบาง|จาน|แก้ว|ขวด|ชาม|สิ่งของ|สินค้า)?\s*(?:แตกง่าย|เปราะบาง|แตกได้)(?:และ|ค่ะ|ครับ|นะคะ)?",
             r"(?:ของ|สินค้า|ข้างใน|ในกล่อง|กล่องนี้|กล่อง)?\s*(?:เป็น|มี)?\s*(?:เครื่องแก้วและเซรามิก|จานเซรามิกและแก้วไวน์|จานเซรามิก|เซรามิก|ขวดน้ำหอม|แก้วกาแฟ|แก้วไวน์|แจกันแก้ว|ขวดแก้ว|เครื่องแก้ว|กระจก|จานกระเบื้อง|กระเบื้อง|ของเปราะบาง)(?:หลายใบ)?(?:ค่ะ|ครับ|นะคะ)?",
-            r"(?:ฝาก)?ระวังแตก(?:ด้วย(?:ค่ะ|ครับ|นะคะ)?)?",
+            r"(?:ฝาก)?ระวัง(?:ของ)?แตก(?:ด้วย(?:ค่ะ|ครับ|นะคะ)?)?",
+            r"กล่องแก้ว|กล่องมีแก้ว|มีแก้ว",
             r"(?:ขอ)?(?:ห่อ)?(?:กันกระแทก|บับเบิล)(?:หลายชั้น)?",
             r"ขอแพ็กแน่นๆ",
             r"กล่องนี้ไม่แตกง่าย(?:ครับ|ค่ะ)?",
